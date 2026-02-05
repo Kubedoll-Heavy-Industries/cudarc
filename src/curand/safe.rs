@@ -182,7 +182,7 @@ mod tests {
         let stream = ctx.default_stream();
 
         let mut a_dev = stream.alloc_zeros::<f32>(10).unwrap();
-        let mut b_dev = a_dev.clone();
+        let mut b_dev = a_dev.try_clone().unwrap();
 
         let a_rng = CudaRng::new(0, stream.clone()).unwrap();
         let b_rng = CudaRng::new(0, stream.clone()).unwrap();
@@ -201,7 +201,7 @@ mod tests {
         let stream = ctx.default_stream();
 
         let mut a_dev = stream.alloc_zeros::<f32>(10).unwrap();
-        let mut b_dev = a_dev.clone();
+        let mut b_dev = a_dev.try_clone().unwrap();
 
         let a_rng = CudaRng::new(0, stream.clone()).unwrap();
         let b_rng = CudaRng::new(1, stream.clone()).unwrap();
