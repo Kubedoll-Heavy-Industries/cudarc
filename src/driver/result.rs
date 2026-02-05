@@ -805,6 +805,53 @@ pub mod stream {
         sys::cuStreamIsCapturing(stream, status.as_mut_ptr()).result()?;
         Ok(status.assume_init())
     }
+
+    /// Information about ongoing stream capture
+    #[derive(Debug, Clone)]
+    pub struct CaptureInfo {
+        pub status: sys::CUstreamCaptureStatus,
+        pub id: u64,
+    }
+
+    /// Get capture info for a stream.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g9d22e54a0755b3b0e01dca4c9a9e70c8)
+    ///
+    /// # Safety
+    /// Stream must be valid
+    #[cfg(any(
+        feature = "cuda-11040",
+        feature = "cuda-11050",
+        feature = "cuda-11060",
+        feature = "cuda-11070",
+        feature = "cuda-11080",
+        feature = "cuda-12000",
+        feature = "cuda-12010",
+        feature = "cuda-12020",
+        feature = "cuda-12030",
+        feature = "cuda-12040",
+        feature = "cuda-12050",
+        feature = "cuda-12060",
+        feature = "cuda-12080",
+        feature = "cuda-12090"
+    ))]
+    pub unsafe fn get_capture_info(stream: sys::CUstream) -> Result<CaptureInfo, DriverError> {
+        let mut status = MaybeUninit::uninit();
+        let mut id = MaybeUninit::uninit();
+        sys::cuStreamGetCaptureInfo_v2(
+            stream,
+            status.as_mut_ptr(),
+            id.as_mut_ptr(),
+            std::ptr::null_mut(), // graph - not needed
+            std::ptr::null_mut(), // dependencies
+            std::ptr::null_mut(), // numDependencies
+        )
+        .result()?;
+        Ok(CaptureInfo {
+            status: status.assume_init(),
+            id: id.assume_init(),
+        })
+    }
 }
 
 /// Allocates memory with stream ordered semantics.
@@ -1521,6 +1568,467 @@ pub mod graph {
         stream: sys::CUstream,
     ) -> Result<(), DriverError> {
         sys::cuGraphUpload(graph_exec, stream).result()
+    }
+
+    /// Returns all nodes in a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g048f6e36f5d7e0ad5f6e2ab38ee37e55)
+    ///
+    /// # Safety
+    /// graph must be valid
+    pub unsafe fn get_nodes(graph: sys::CUgraph) -> Result<Vec<sys::CUgraphNode>, DriverError> {
+        // First call to get the number of nodes
+        let mut num_nodes = MaybeUninit::uninit();
+        sys::cuGraphGetNodes(graph, std::ptr::null_mut(), num_nodes.as_mut_ptr()).result()?;
+        let num_nodes = num_nodes.assume_init();
+
+        if num_nodes == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Second call to get the actual nodes
+        let mut nodes = vec![std::ptr::null_mut(); num_nodes];
+        let mut actual_count = num_nodes;
+        sys::cuGraphGetNodes(graph, nodes.as_mut_ptr(), &mut actual_count).result()?;
+        nodes.truncate(actual_count);
+        Ok(nodes)
+    }
+
+    /// Returns all root nodes in a graph (nodes with no dependencies).
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g00216ee8e72ca27c85c27e3e81e837f6)
+    ///
+    /// # Safety
+    /// graph must be valid
+    pub unsafe fn get_root_nodes(
+        graph: sys::CUgraph,
+    ) -> Result<Vec<sys::CUgraphNode>, DriverError> {
+        // First call to get the number of root nodes
+        let mut num_nodes = MaybeUninit::uninit();
+        sys::cuGraphGetRootNodes(graph, std::ptr::null_mut(), num_nodes.as_mut_ptr()).result()?;
+        let num_nodes = num_nodes.assume_init();
+
+        if num_nodes == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Second call to get the actual nodes
+        let mut nodes = vec![std::ptr::null_mut(); num_nodes];
+        let mut actual_count = num_nodes;
+        sys::cuGraphGetRootNodes(graph, nodes.as_mut_ptr(), &mut actual_count).result()?;
+        nodes.truncate(actual_count);
+        Ok(nodes)
+    }
+
+    /// Returns all edges in a graph as (from, to) pairs.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1ge9d27a6b2ebca4d9e5f94c0c8c8b0e06)
+    ///
+    /// # Safety
+    /// graph must be valid
+    #[cfg(any(
+        feature = "cuda-11040",
+        feature = "cuda-11050",
+        feature = "cuda-11060",
+        feature = "cuda-11070",
+        feature = "cuda-11080",
+        feature = "cuda-12000",
+        feature = "cuda-12010",
+        feature = "cuda-12020",
+        feature = "cuda-12030",
+        feature = "cuda-12040",
+        feature = "cuda-12050",
+        feature = "cuda-12060",
+        feature = "cuda-12080",
+        feature = "cuda-12090"
+    ))]
+    pub unsafe fn get_edges(
+        graph: sys::CUgraph,
+    ) -> Result<Vec<(sys::CUgraphNode, sys::CUgraphNode)>, DriverError> {
+        // First call to get the number of edges
+        let mut num_edges = MaybeUninit::uninit();
+        sys::cuGraphGetEdges(
+            graph,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            num_edges.as_mut_ptr(),
+        )
+        .result()?;
+        let num_edges = num_edges.assume_init();
+
+        if num_edges == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Second call to get the actual edges
+        let mut from_nodes = vec![std::ptr::null_mut(); num_edges];
+        let mut to_nodes = vec![std::ptr::null_mut(); num_edges];
+        let mut actual_count = num_edges;
+        sys::cuGraphGetEdges(
+            graph,
+            from_nodes.as_mut_ptr(),
+            to_nodes.as_mut_ptr(),
+            &mut actual_count,
+        )
+        .result()?;
+        from_nodes.truncate(actual_count);
+        to_nodes.truncate(actual_count);
+
+        Ok(from_nodes.into_iter().zip(to_nodes).collect())
+    }
+
+    /// Clones a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g9d5cfeb00b8ee918ea3c6f0816b4d8ef)
+    ///
+    /// # Safety
+    /// graph must be valid
+    pub unsafe fn clone(graph: sys::CUgraph) -> Result<sys::CUgraph, DriverError> {
+        let mut cloned_graph = MaybeUninit::uninit();
+        sys::cuGraphClone(cloned_graph.as_mut_ptr(), graph).result()?;
+        Ok(cloned_graph.assume_init())
+    }
+
+    /// Returns the type of a graph node.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g65be75993be27f5c46ee30a3d62203c2)
+    ///
+    /// # Safety
+    /// node must be valid
+    pub unsafe fn node_get_type(
+        node: sys::CUgraphNode,
+    ) -> Result<sys::CUgraphNodeType, DriverError> {
+        let mut node_type = MaybeUninit::uninit();
+        sys::cuGraphNodeGetType(node, node_type.as_mut_ptr()).result()?;
+        Ok(node_type.assume_init())
+    }
+
+    /// Sets the parameters of a kernel node in an instantiated graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd84243569e4c3d6356b9f2eea20ed48c)
+    ///
+    /// # Safety
+    /// graph_exec, node, and node_params must be valid.
+    /// The kernel parameters (args) must match the kernel signature and remain valid.
+    #[cfg(any(
+        feature = "cuda-11040",
+        feature = "cuda-11050",
+        feature = "cuda-11060",
+        feature = "cuda-11070",
+        feature = "cuda-11080"
+    ))]
+    pub unsafe fn exec_kernel_node_set_params(
+        graph_exec: sys::CUgraphExec,
+        node: sys::CUgraphNode,
+        node_params: *const sys::CUDA_KERNEL_NODE_PARAMS,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphExecKernelNodeSetParams(graph_exec, node, node_params).result()
+    }
+
+    /// Sets the parameters of a kernel node in an instantiated graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd84243569e4c3d6356b9f2eea20ed48c)
+    ///
+    /// # Safety
+    /// graph_exec, node, and node_params must be valid.
+    /// The kernel parameters (args) must match the kernel signature and remain valid.
+    #[cfg(any(
+        feature = "cuda-12000",
+        feature = "cuda-12010",
+        feature = "cuda-12020",
+        feature = "cuda-12030",
+        feature = "cuda-12040",
+        feature = "cuda-12050",
+        feature = "cuda-12060",
+        feature = "cuda-12080",
+        feature = "cuda-12090",
+        feature = "cuda-13000",
+        feature = "cuda-13010"
+    ))]
+    pub unsafe fn exec_kernel_node_set_params(
+        graph_exec: sys::CUgraphExec,
+        node: sys::CUgraphNode,
+        node_params: *const sys::CUDA_KERNEL_NODE_PARAMS,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphExecKernelNodeSetParams_v2(graph_exec, node, node_params).result()
+    }
+
+    /// Sets the parameters of a memcpy node in an instantiated graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g50a5c0a1a5a6b0c7b3e3d5a8a9c3b0d7)
+    ///
+    /// # Safety
+    /// graph_exec, node, copy_params, and ctx must be valid.
+    /// The source and destination memory must remain valid.
+    pub unsafe fn exec_memcpy_node_set_params(
+        graph_exec: sys::CUgraphExec,
+        node: sys::CUgraphNode,
+        copy_params: *const sys::CUDA_MEMCPY3D,
+        ctx: sys::CUcontext,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphExecMemcpyNodeSetParams(graph_exec, node, copy_params, ctx).result()
+    }
+
+    /// Updates an instantiated graph to match a new graph definition.
+    ///
+    /// Returns the update result and optionally an error node if the update failed.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g27a7df53a4a5e4a9c3d4d3b5a8a9c3b0)
+    ///
+    /// # Safety
+    /// graph_exec and graph must be valid
+    #[cfg(any(
+        feature = "cuda-11040",
+        feature = "cuda-11050",
+        feature = "cuda-11060",
+        feature = "cuda-11070",
+        feature = "cuda-11080"
+    ))]
+    pub unsafe fn exec_update(
+        graph_exec: sys::CUgraphExec,
+        graph: sys::CUgraph,
+    ) -> Result<(sys::CUgraphExecUpdateResult, sys::CUgraphNode), DriverError> {
+        let mut error_node = MaybeUninit::uninit();
+        let mut update_result = MaybeUninit::uninit();
+        sys::cuGraphExecUpdate(
+            graph_exec,
+            graph,
+            error_node.as_mut_ptr(),
+            update_result.as_mut_ptr(),
+        )
+        .result()?;
+        Ok((update_result.assume_init(), error_node.assume_init()))
+    }
+
+    /// Updates an instantiated graph to match a new graph definition.
+    ///
+    /// Returns the update result and optionally an error node if the update failed.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g27a7df53a4a5e4a9c3d4d3b5a8a9c3b0)
+    ///
+    /// # Safety
+    /// graph_exec and graph must be valid
+    #[cfg(any(
+        feature = "cuda-12000",
+        feature = "cuda-12010",
+        feature = "cuda-12020",
+        feature = "cuda-12030",
+        feature = "cuda-12040",
+        feature = "cuda-12050",
+        feature = "cuda-12060",
+        feature = "cuda-12080",
+        feature = "cuda-12090",
+        feature = "cuda-13000",
+        feature = "cuda-13010"
+    ))]
+    pub unsafe fn exec_update(
+        graph_exec: sys::CUgraphExec,
+        graph: sys::CUgraph,
+    ) -> Result<(sys::CUgraphExecUpdateResult, sys::CUgraphNode), DriverError> {
+        let mut result_info = MaybeUninit::<sys::CUgraphExecUpdateResultInfo>::uninit();
+        sys::cuGraphExecUpdate_v2(graph_exec, graph, result_info.as_mut_ptr()).result()?;
+        let result_info = result_info.assume_init();
+        Ok((result_info.result, result_info.errorNode))
+    }
+
+    /// Gets the parameters of a kernel node.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g5a8a9c3d4d3b5a8a9c3b0d7)
+    ///
+    /// # Safety
+    /// node and node_params must be valid
+    #[cfg(any(
+        feature = "cuda-11040",
+        feature = "cuda-11050",
+        feature = "cuda-11060",
+        feature = "cuda-11070",
+        feature = "cuda-11080"
+    ))]
+    pub unsafe fn kernel_node_get_params(
+        node: sys::CUgraphNode,
+        node_params: *mut sys::CUDA_KERNEL_NODE_PARAMS,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphKernelNodeGetParams(node, node_params).result()
+    }
+
+    /// Gets the parameters of a kernel node.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g5a8a9c3d4d3b5a8a9c3b0d7)
+    ///
+    /// # Safety
+    /// node and node_params must be valid
+    #[cfg(any(
+        feature = "cuda-12000",
+        feature = "cuda-12010",
+        feature = "cuda-12020",
+        feature = "cuda-12030",
+        feature = "cuda-12040",
+        feature = "cuda-12050",
+        feature = "cuda-12060",
+        feature = "cuda-12080",
+        feature = "cuda-12090",
+        feature = "cuda-13000",
+        feature = "cuda-13010"
+    ))]
+    pub unsafe fn kernel_node_get_params(
+        node: sys::CUgraphNode,
+        node_params: *mut sys::CUDA_KERNEL_NODE_PARAMS,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphKernelNodeGetParams_v2(node, node_params).result()
+    }
+
+    /// Gets the parameters of a memcpy node.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g6a8a9c3d4d3b5a8a9c3b0d7)
+    ///
+    /// # Safety
+    /// node and node_params must be valid
+    pub unsafe fn memcpy_node_get_params(
+        node: sys::CUgraphNode,
+        node_params: *mut sys::CUDA_MEMCPY3D,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphMemcpyNodeGetParams(node, node_params).result()
+    }
+}
+
+pub mod mem_pool {
+    //! Memory pool management functions (`cuMemPool*`).
+    //!
+    //! See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html)
+
+    use super::{
+        sys::{self},
+        DriverError,
+    };
+    use std::mem::MaybeUninit;
+
+    /// Creates a memory pool on the specified device.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g4f2c67c59a7adfe6ba65cca1c7b6fd45)
+    ///
+    /// # Safety
+    /// Device must be valid.
+    pub unsafe fn create(
+        _device: sys::CUdevice,
+        ordinal: i32,
+    ) -> Result<sys::CUmemoryPool, DriverError> {
+        let mut pool = MaybeUninit::uninit();
+
+        // Initialize pool properties with zeros
+        let mut props: sys::CUmemPoolProps = std::mem::zeroed();
+        props.allocType = sys::CUmemAllocationType::CU_MEM_ALLOCATION_TYPE_PINNED;
+        props.handleTypes = sys::CUmemAllocationHandleType::CU_MEM_HANDLE_TYPE_NONE;
+        props.location.type_ = sys::CUmemLocationType::CU_MEM_LOCATION_TYPE_DEVICE;
+        props.location.id = ordinal;
+
+        sys::cuMemPoolCreate(pool.as_mut_ptr(), &props).result()?;
+        Ok(pool.assume_init())
+    }
+
+    /// Destroys a memory pool.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g6e3a4b4b4b4b4b4b4b4b4b4b4b4b4b4b)
+    ///
+    /// # Safety
+    /// Pool must be valid and not already destroyed.
+    pub unsafe fn destroy(pool: sys::CUmemoryPool) -> Result<(), DriverError> {
+        sys::cuMemPoolDestroy(pool).result()
+    }
+
+    /// Trim the pool, releasing memory back to the OS.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g6a9a5f1b4f0b7e5c0e6e0a7c9a6a8a8a)
+    ///
+    /// # Safety
+    /// Pool must be valid.
+    pub unsafe fn trim(
+        pool: sys::CUmemoryPool,
+        min_bytes_to_keep: usize,
+    ) -> Result<(), DriverError> {
+        sys::cuMemPoolTrimTo(pool, min_bytes_to_keep).result()
+    }
+
+    /// Get a pool attribute.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f)
+    ///
+    /// # Safety
+    /// Pool must be valid.
+    pub unsafe fn get_attribute(
+        pool: sys::CUmemoryPool,
+        attr: sys::CUmemPool_attribute,
+    ) -> Result<u64, DriverError> {
+        let mut value: u64 = 0;
+        sys::cuMemPoolGetAttribute(pool, attr, &mut value as *mut u64 as *mut _).result()?;
+        Ok(value)
+    }
+
+    /// Set a pool attribute.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f)
+    ///
+    /// # Safety
+    /// Pool must be valid.
+    pub unsafe fn set_attribute(
+        pool: sys::CUmemoryPool,
+        attr: sys::CUmemPool_attribute,
+        value: u64,
+    ) -> Result<(), DriverError> {
+        let mut val = value;
+        sys::cuMemPoolSetAttribute(pool, attr, &mut val as *mut u64 as *mut _).result()
+    }
+
+    /// Allocate memory from a pool asynchronously.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f)
+    ///
+    /// # Safety
+    /// Pool and stream must be valid.
+    pub unsafe fn alloc_async(
+        pool: sys::CUmemoryPool,
+        size: usize,
+        stream: sys::CUstream,
+    ) -> Result<sys::CUdeviceptr, DriverError> {
+        let mut dev_ptr = MaybeUninit::uninit();
+        sys::cuMemAllocFromPoolAsync(dev_ptr.as_mut_ptr(), size, pool, stream).result()?;
+        Ok(dev_ptr.assume_init())
+    }
+
+    /// Get the default memory pool for a device.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__DEVICE.html#group__CUDA__DEVICE_1g26aa5b41f58e5cb8f9e5e9b1a3e8e8e8)
+    ///
+    /// # Safety
+    /// Device must be valid.
+    pub unsafe fn get_default(device: sys::CUdevice) -> Result<sys::CUmemoryPool, DriverError> {
+        let mut pool = MaybeUninit::uninit();
+        sys::cuDeviceGetDefaultMemPool(pool.as_mut_ptr(), device).result()?;
+        Ok(pool.assume_init())
+    }
+
+    /// Get the current memory pool for a device.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__DEVICE.html#group__CUDA__DEVICE_1g8d4f6a4b6b9c5d7a0a0a0a0a0a0a0a0a)
+    ///
+    /// # Safety
+    /// Device must be valid.
+    pub unsafe fn get_current(device: sys::CUdevice) -> Result<sys::CUmemoryPool, DriverError> {
+        let mut pool = MaybeUninit::uninit();
+        sys::cuDeviceGetMemPool(pool.as_mut_ptr(), device).result()?;
+        Ok(pool.assume_init())
+    }
+
+    /// Set the current memory pool for a device.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__DEVICE.html#group__CUDA__DEVICE_1g0c0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a)
+    ///
+    /// # Safety
+    /// Device and pool must be valid.
+    pub unsafe fn set_current(
+        device: sys::CUdevice,
+        pool: sys::CUmemoryPool,
+    ) -> Result<(), DriverError> {
+        sys::cuDeviceSetMemPool(device, pool).result()
     }
 }
 

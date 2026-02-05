@@ -852,18 +852,54 @@ impl<T> CudaSlice<T> {
     }
 }
 
-impl<T: DeviceRepr> CudaSlice<T> {
+/// Trait for types that can be cloned but may fail.
+///
+/// Unlike [`Clone`], this does not panic on failure. This is important for
+/// GPU memory allocations where out-of-memory is a recoverable error condition
+/// rather than a fatal panic.
+///
+/// # Example
+/// ```ignore
+/// use cudarc::driver::{CudaContext, TryClone};
+///
+/// let ctx = CudaContext::new(0)?;
+/// let stream = ctx.default_stream();
+/// let original = stream.alloc_zeros::<f32>(1024)?;
+/// let cloned = original.try_clone()?;
+/// ```
+pub trait TryClone: Sized {
+    /// The error type returned when cloning fails.
+    type Error;
+
+    /// Attempts to clone the value, returning an error if the operation fails.
+    fn try_clone(&self) -> Result<Self, Self::Error>;
+}
+
+impl<T: DeviceRepr> TryClone for CudaSlice<T> {
+    type Error = result::DriverError;
+
     /// Allocates copy of self and schedules a device to device copy of memory.
-    pub fn try_clone(&self) -> Result<Self, result::DriverError> {
+    fn try_clone(&self) -> Result<Self, Self::Error> {
         self.stream.clone_dtod(self)
     }
 }
 
-impl<T: DeviceRepr> Clone for CudaSlice<T> {
-    fn clone(&self) -> Self {
-        self.try_clone().unwrap()
-    }
-}
+// NOTE: Clone impl intentionally removed for CudaSlice<T>.
+//
+// The previous Clone impl would panic on OOM:
+// ```
+// impl<T: DeviceRepr> Clone for CudaSlice<T> {
+//     fn clone(&self) -> Self {
+//         self.try_clone().unwrap()  // 💥 OOM = panic in production!
+//     }
+// }
+// ```
+//
+// This is a BREAKING CHANGE. Users must now use `try_clone()` directly:
+// ```
+// // Before: let copy = slice.clone();
+// // After:  let copy = slice.try_clone()?;
+// ```
 
 impl<T: Clone + Default + DeviceRepr> TryFrom<CudaSlice<T>> for Vec<T> {
     type Error = result::DriverError;

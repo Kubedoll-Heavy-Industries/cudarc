@@ -3,7 +3,7 @@
 use super::{result, result::CublasError, sys};
 use crate::cublaslt::result::set_matrix_layout_attribute;
 use crate::driver::sys::{CUdevice_attribute, CUdeviceptr};
-use crate::driver::{CudaSlice, CudaStream, DevicePtr, DevicePtrMut, DriverError};
+use crate::driver::{CudaSlice, CudaStream, DevicePtr, DevicePtrMut, DriverError, TryClone};
 use core::ffi::c_int;
 use core::mem;
 use std::sync::Arc;
@@ -53,10 +53,21 @@ impl Drop for CudaBlasLT {
 ///
 /// 1. NVIDIA Hopper Architecture: 32 MiB
 /// 2. Other: 4 MiB
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Workspace {
     pub(crate) buffer: CudaSlice<u8>,
     pub(crate) size: usize,
+}
+
+impl TryClone for Workspace {
+    type Error = DriverError;
+
+    fn try_clone(&self) -> Result<Self, Self::Error> {
+        Ok(Self {
+            buffer: self.buffer.try_clone()?,
+            size: self.size,
+        })
+    }
 }
 
 impl Workspace {
