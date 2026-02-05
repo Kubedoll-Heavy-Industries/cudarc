@@ -1661,6 +1661,129 @@ pub mod graph {
     ) -> Result<(), DriverError> {
         sys::cuGraphMemcpyNodeGetParams(node, node_params).result()
     }
+
+    /// Creates an empty graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd885f719186010727b75c3315f865fdf)
+    ///
+    /// # Safety
+    /// Must be called with a valid CUDA context bound to the current thread.
+    pub unsafe fn create(flags: u32) -> Result<sys::CUgraph, DriverError> {
+        let mut graph = MaybeUninit::uninit();
+        sys::cuGraphCreate(graph.as_mut_ptr(), flags).result()?;
+        Ok(graph.assume_init())
+    }
+
+    /// Adds an empty node to a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g4e0f5c93ce77f3f99e14fd1a00ce8c08)
+    ///
+    /// # Safety
+    /// graph and all dependencies must be valid
+    pub unsafe fn add_empty_node(
+        graph: sys::CUgraph,
+        dependencies: *const sys::CUgraphNode,
+        num_dependencies: usize,
+    ) -> Result<sys::CUgraphNode, DriverError> {
+        let mut node = MaybeUninit::uninit();
+        sys::cuGraphAddEmptyNode(node.as_mut_ptr(), graph, dependencies, num_dependencies)
+            .result()?;
+        Ok(node.assume_init())
+    }
+
+    /// Adds a kernel node to a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g50d871e3bd06c1b0c32e0e8ced67db5d)
+    ///
+    /// # Safety
+    /// graph, dependencies, and node_params must be valid.
+    /// The kernel parameters must match the kernel signature.
+    #[cfg(cuda_11_only)]
+    pub unsafe fn add_kernel_node(
+        graph: sys::CUgraph,
+        dependencies: *const sys::CUgraphNode,
+        num_dependencies: usize,
+        node_params: *const sys::CUDA_KERNEL_NODE_PARAMS,
+    ) -> Result<sys::CUgraphNode, DriverError> {
+        let mut node = MaybeUninit::uninit();
+        sys::cuGraphAddKernelNode(
+            node.as_mut_ptr(),
+            graph,
+            dependencies,
+            num_dependencies,
+            node_params,
+        )
+        .result()?;
+        Ok(node.assume_init())
+    }
+
+    /// Adds a kernel node to a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g50d871e3bd06c1b0c32e0e8ced67db5d)
+    ///
+    /// # Safety
+    /// graph, dependencies, and node_params must be valid.
+    /// The kernel parameters must match the kernel signature.
+    #[cfg(cuda_12_plus)]
+    pub unsafe fn add_kernel_node(
+        graph: sys::CUgraph,
+        dependencies: *const sys::CUgraphNode,
+        num_dependencies: usize,
+        node_params: *const sys::CUDA_KERNEL_NODE_PARAMS,
+    ) -> Result<sys::CUgraphNode, DriverError> {
+        let mut node = MaybeUninit::uninit();
+        sys::cuGraphAddKernelNode_v2(
+            node.as_mut_ptr(),
+            graph,
+            dependencies,
+            num_dependencies,
+            node_params,
+        )
+        .result()?;
+        Ok(node.assume_init())
+    }
+
+    /// Adds a memcpy node to a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g674da6ab54a677f13e0e0e8206ff5f3a)
+    ///
+    /// # Safety
+    /// graph, dependencies, copy_params, and ctx must be valid.
+    /// The source and destination memory must be valid.
+    pub unsafe fn add_memcpy_node(
+        graph: sys::CUgraph,
+        dependencies: *const sys::CUgraphNode,
+        num_dependencies: usize,
+        copy_params: *const sys::CUDA_MEMCPY3D,
+        ctx: sys::CUcontext,
+    ) -> Result<sys::CUgraphNode, DriverError> {
+        let mut node = MaybeUninit::uninit();
+        sys::cuGraphAddMemcpyNode(
+            node.as_mut_ptr(),
+            graph,
+            dependencies,
+            num_dependencies,
+            copy_params,
+            ctx,
+        )
+        .result()?;
+        Ok(node.assume_init())
+    }
+
+    /// Adds dependencies between nodes in a graph.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g3acf23cfc62a5c4c8e044d21b5c42b6d)
+    ///
+    /// # Safety
+    /// graph and all nodes must be valid. Nodes must belong to the graph.
+    pub unsafe fn add_dependencies(
+        graph: sys::CUgraph,
+        from: *const sys::CUgraphNode,
+        to: *const sys::CUgraphNode,
+        num_dependencies: usize,
+    ) -> Result<(), DriverError> {
+        sys::cuGraphAddDependencies(graph, from, to, num_dependencies).result()
+    }
 }
 
 pub mod mem_pool {

@@ -14,8 +14,10 @@ pub use self::core::{
     TryClone, ValidAsZeroBits,
 };
 pub use self::external_memory::{ExternalMemory, MappedBuffer};
+#[allow(deprecated)]
+pub use self::graph::CudaGraph;
 pub use self::graph::{
-    CudaGraph, CudaGraphDef, CudaGraphExec, CudaGraphNode, GraphUpdateResult, KernelNodeParams,
+    CudaGraphDef, CudaGraphExec, CudaGraphNode, GraphUpdateResult, KernelNodeParams,
 };
 pub use self::launch::{LaunchArgs, LaunchConfig, PushKernelArg};
 pub use self::mem_pool::{CudaMemPool, MemPoolConfig};
