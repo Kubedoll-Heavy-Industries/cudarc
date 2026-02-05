@@ -20,6 +20,10 @@ use super::{CudaContext, CudaStream, DriverError};
 /// > Note that this includes APIs which may appear to be read-only, such as cudaGraphClone() (cuGraphClone()) and cudaGraphInstantiate() (cuGraphInstantiate()). No API or pair of APIs is guaranteed to be safe to call on the same graph object from two different threads without serialization.
 ///
 /// <https://docs.nvidia.com/cuda/cuda-driver-api/graphs-thread-safety.html#graphs-thread-safety>
+#[deprecated(
+    since = "0.13.0",
+    note = "Use CudaGraphDef and CudaGraphExec for type-safe graph management"
+)]
 pub struct CudaGraph {
     cu_graph: sys::CUgraph,
     cu_graph_exec: sys::CUgraphExec,
@@ -28,6 +32,7 @@ pub struct CudaGraph {
     _not_send_sync: PhantomData<*const ()>,
 }
 
+#[allow(deprecated)]
 impl Drop for CudaGraph {
     fn drop(&mut self) {
         let ctx = &self.stream.ctx;
@@ -44,6 +49,16 @@ impl Drop for CudaGraph {
     }
 }
 
+#[allow(deprecated)]
+impl std::fmt::Debug for CudaGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CudaGraph")
+            .field("cu_graph", &self.cu_graph)
+            .field("cu_graph_exec", &self.cu_graph_exec)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CudaStream {
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g767167da0bbf07157dc20b6c258a2143)
     pub fn begin_capture(&self, mode: sys::CUstreamCaptureMode) -> Result<(), DriverError> {
@@ -54,6 +69,7 @@ impl CudaStream {
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g03dab8b2ba76b00718955177a929970c)
     ///
     /// `flags` is passed to [cuGraphInstantiate](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gb53b435e178cccfa37ac87285d2c3fa1)
+    #[allow(deprecated)]
     pub fn end_capture(
         self: &Arc<Self>,
         flags: sys::CUgraphInstantiate_flags,
@@ -124,6 +140,7 @@ impl CudaStream {
     }
 }
 
+#[allow(deprecated)]
 impl CudaGraph {
     /// Launches the graph on its capture stream.
     ///
@@ -166,11 +183,13 @@ impl CudaGraph {
     }
 
     /// Returns the stream this graph was captured from.
+    #[inline]
     pub fn stream(&self) -> &Arc<CudaStream> {
         &self.stream
     }
 
     /// Returns the context this graph belongs to.
+    #[inline]
     pub fn context(&self) -> &Arc<CudaContext> {
         &self.stream.ctx
     }
@@ -179,6 +198,7 @@ impl CudaGraph {
     ///
     /// # Safety
     /// Do not destroy this handle.
+    #[inline]
     pub fn cu_graph(&self) -> sys::CUgraph {
         self.cu_graph
     }
@@ -187,6 +207,7 @@ impl CudaGraph {
     ///
     /// # Safety
     /// Do not destroy this handle.
+    #[inline]
     pub fn cu_graph_exec(&self) -> sys::CUgraphExec {
         self.cu_graph_exec
     }
@@ -385,6 +406,7 @@ impl<'graph> CudaGraphNode<'graph> {
     /// Returns the type of this graph node.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g65be75993be27f5c46ee30a3d62203c2)
+    #[inline]
     pub fn node_type(&self) -> Result<sys::CUgraphNodeType, DriverError> {
         unsafe { result::graph::node_get_type(self.cu_node) }
     }
@@ -397,6 +419,7 @@ impl<'graph> CudaGraphNode<'graph> {
     ///
     /// **You must not free/destroy the node**, as it is still
     /// owned by the parent graph.
+    #[inline]
     pub fn cu_node(&self) -> sys::CUgraphNode {
         self.cu_node
     }
@@ -433,6 +456,14 @@ impl Drop for CudaGraphDef {
             self.ctx
                 .record_err(unsafe { result::graph::destroy(cu_graph) });
         }
+    }
+}
+
+impl std::fmt::Debug for CudaGraphDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CudaGraphDef")
+            .field("cu_graph", &self.cu_graph)
+            .finish_non_exhaustive()
     }
 }
 
@@ -529,13 +560,265 @@ impl CudaGraphDef {
     ///
     /// **You must not free/destroy the graph**, as it is still
     /// owned by this [CudaGraphDef].
+    #[inline]
     pub fn cu_graph(&self) -> sys::CUgraph {
         self.cu_graph
     }
 
     /// Returns a reference to the CUDA context this graph was created in.
+    #[inline]
     pub fn context(&self) -> &Arc<CudaContext> {
         &self.ctx
+    }
+
+    /// Creates an empty graph definition.
+    ///
+    /// This allows building graphs programmatically by adding nodes with
+    /// [`add_empty_node`](Self::add_empty_node), [`add_kernel_node`](Self::add_kernel_node),
+    /// [`add_memcpy_node`](Self::add_memcpy_node), etc.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd885f719186010727b75c3315f865fdf)
+    pub fn new(ctx: &Arc<CudaContext>) -> Result<Self, DriverError> {
+        ctx.bind_to_thread()?;
+        let cu_graph = unsafe { result::graph::create(0) }?;
+        Ok(CudaGraphDef {
+            cu_graph,
+            ctx: ctx.clone(),
+            _not_send_sync: PhantomData,
+        })
+    }
+
+    /// Adds an empty node to the graph.
+    ///
+    /// Empty nodes are useful as synchronization points in the graph.
+    /// They can have dependencies and be depended upon, but perform no work.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g4e0f5c93ce77f3f99e14fd1a00ce8c08)
+    pub fn add_empty_node(
+        &self,
+        dependencies: &[CudaGraphNode<'_>],
+    ) -> Result<CudaGraphNode<'_>, DriverError> {
+        self.ctx.bind_to_thread()?;
+
+        let dep_ptrs: Vec<sys::CUgraphNode> = dependencies.iter().map(|n| n.cu_node).collect();
+        let dep_ptr = if dep_ptrs.is_empty() {
+            std::ptr::null()
+        } else {
+            dep_ptrs.as_ptr()
+        };
+
+        let cu_node =
+            unsafe { result::graph::add_empty_node(self.cu_graph, dep_ptr, dep_ptrs.len()) }?;
+
+        Ok(CudaGraphNode {
+            cu_node,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Adds a kernel node to the graph.
+    ///
+    /// # Safety
+    ///
+    /// - `args` must match the kernel signature exactly.
+    /// - Pointers in `args` must remain valid until graph execution completes.
+    /// - The kernel function must be valid for the graph's context.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g50d871e3bd06c1b0c32e0e8ced67db5d)
+    #[cfg(cuda_11_only)]
+    pub unsafe fn add_kernel_node(
+        &self,
+        params: &KernelNodeParams,
+        args: &mut [*mut std::ffi::c_void],
+        dependencies: &[CudaGraphNode<'_>],
+    ) -> Result<CudaGraphNode<'_>, DriverError> {
+        self.ctx.bind_to_thread()?;
+
+        let dep_ptrs: Vec<sys::CUgraphNode> = dependencies.iter().map(|n| n.cu_node).collect();
+        let dep_ptr = if dep_ptrs.is_empty() {
+            std::ptr::null()
+        } else {
+            dep_ptrs.as_ptr()
+        };
+
+        let kernel_params = sys::CUDA_KERNEL_NODE_PARAMS {
+            func: params.func,
+            gridDimX: params.grid_dim.0,
+            gridDimY: params.grid_dim.1,
+            gridDimZ: params.grid_dim.2,
+            blockDimX: params.block_dim.0,
+            blockDimY: params.block_dim.1,
+            blockDimZ: params.block_dim.2,
+            sharedMemBytes: params.shared_mem_bytes,
+            kernelParams: args.as_mut_ptr(),
+            extra: std::ptr::null_mut(),
+        };
+
+        let cu_node = result::graph::add_kernel_node(
+            self.cu_graph,
+            dep_ptr,
+            dep_ptrs.len(),
+            &kernel_params,
+        )?;
+
+        Ok(CudaGraphNode {
+            cu_node,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Adds a kernel node to the graph.
+    ///
+    /// # Safety
+    ///
+    /// - `args` must match the kernel signature exactly.
+    /// - Pointers in `args` must remain valid until graph execution completes.
+    /// - The kernel function must be valid for the graph's context.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g50d871e3bd06c1b0c32e0e8ced67db5d)
+    #[cfg(cuda_12_plus)]
+    pub unsafe fn add_kernel_node(
+        &self,
+        params: &KernelNodeParams,
+        args: &mut [*mut std::ffi::c_void],
+        dependencies: &[CudaGraphNode<'_>],
+    ) -> Result<CudaGraphNode<'_>, DriverError> {
+        self.ctx.bind_to_thread()?;
+
+        let dep_ptrs: Vec<sys::CUgraphNode> = dependencies.iter().map(|n| n.cu_node).collect();
+        let dep_ptr = if dep_ptrs.is_empty() {
+            std::ptr::null()
+        } else {
+            dep_ptrs.as_ptr()
+        };
+
+        let kernel_params = sys::CUDA_KERNEL_NODE_PARAMS {
+            func: params.func,
+            gridDimX: params.grid_dim.0,
+            gridDimY: params.grid_dim.1,
+            gridDimZ: params.grid_dim.2,
+            blockDimX: params.block_dim.0,
+            blockDimY: params.block_dim.1,
+            blockDimZ: params.block_dim.2,
+            sharedMemBytes: params.shared_mem_bytes,
+            kernelParams: args.as_mut_ptr(),
+            extra: std::ptr::null_mut(),
+            kern: std::ptr::null_mut(),
+            ctx: self.ctx.cu_ctx(),
+        };
+
+        let cu_node = result::graph::add_kernel_node(
+            self.cu_graph,
+            dep_ptr,
+            dep_ptrs.len(),
+            &kernel_params,
+        )?;
+
+        Ok(CudaGraphNode {
+            cu_node,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Adds a device-to-device memcpy node to the graph.
+    ///
+    /// # Safety
+    ///
+    /// - `dst` and `src` must be valid device pointers.
+    /// - The memory regions must remain valid until graph execution completes.
+    /// - The memory regions must not overlap.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g674da6ab54a677f13e0e0e8206ff5f3a)
+    pub unsafe fn add_memcpy_node(
+        &self,
+        dst: sys::CUdeviceptr,
+        src: sys::CUdeviceptr,
+        size: usize,
+        dependencies: &[CudaGraphNode<'_>],
+    ) -> Result<CudaGraphNode<'_>, DriverError> {
+        self.ctx.bind_to_thread()?;
+
+        let dep_ptrs: Vec<sys::CUgraphNode> = dependencies.iter().map(|n| n.cu_node).collect();
+        let dep_ptr = if dep_ptrs.is_empty() {
+            std::ptr::null()
+        } else {
+            dep_ptrs.as_ptr()
+        };
+
+        // Create a 1D device-to-device memcpy descriptor
+        let copy_params = sys::CUDA_MEMCPY3D_st {
+            srcXInBytes: 0,
+            srcY: 0,
+            srcZ: 0,
+            srcLOD: 0,
+            srcMemoryType: sys::CUmemorytype::CU_MEMORYTYPE_DEVICE,
+            srcHost: std::ptr::null(),
+            srcDevice: src,
+            srcArray: std::ptr::null_mut(),
+            reserved0: std::ptr::null_mut(),
+            srcPitch: size,
+            srcHeight: 1,
+            dstXInBytes: 0,
+            dstY: 0,
+            dstZ: 0,
+            dstLOD: 0,
+            dstMemoryType: sys::CUmemorytype::CU_MEMORYTYPE_DEVICE,
+            dstHost: std::ptr::null_mut(),
+            dstDevice: dst,
+            dstArray: std::ptr::null_mut(),
+            reserved1: std::ptr::null_mut(),
+            dstPitch: size,
+            dstHeight: 1,
+            WidthInBytes: size,
+            Height: 1,
+            Depth: 1,
+        };
+
+        let cu_node = result::graph::add_memcpy_node(
+            self.cu_graph,
+            dep_ptr,
+            dep_ptrs.len(),
+            &copy_params,
+            self.ctx.cu_ctx(),
+        )?;
+
+        Ok(CudaGraphNode {
+            cu_node,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Adds dependencies between existing nodes in the graph.
+    ///
+    /// Each pair `(from[i], to[i])` creates an edge where `from[i]` must
+    /// complete before `to[i]` can execute.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g3acf23cfc62a5c4c8e044d21b5c42b6d)
+    pub fn add_dependencies(
+        &self,
+        from: &[CudaGraphNode<'_>],
+        to: &[CudaGraphNode<'_>],
+    ) -> Result<(), DriverError> {
+        if from.len() != to.len() {
+            return Err(DriverError(sys::cudaError_enum::CUDA_ERROR_INVALID_VALUE));
+        }
+        if from.is_empty() {
+            return Ok(());
+        }
+
+        self.ctx.bind_to_thread()?;
+
+        let from_ptrs: Vec<sys::CUgraphNode> = from.iter().map(|n| n.cu_node).collect();
+        let to_ptrs: Vec<sys::CUgraphNode> = to.iter().map(|n| n.cu_node).collect();
+
+        unsafe {
+            result::graph::add_dependencies(
+                self.cu_graph,
+                from_ptrs.as_ptr(),
+                to_ptrs.as_ptr(),
+                from_ptrs.len(),
+            )
+        }
     }
 }
 
@@ -571,6 +854,14 @@ impl Drop for CudaGraphExec<'_> {
     }
 }
 
+impl std::fmt::Debug for CudaGraphExec<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CudaGraphExec")
+            .field("cu_graph_exec", &self.cu_graph_exec)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Parameters for updating a kernel node in an instantiated graph.
 #[derive(Debug, Clone)]
 pub struct KernelNodeParams {
@@ -596,6 +887,7 @@ pub struct GraphUpdateResult {
 
 impl GraphUpdateResult {
     /// Returns `true` if the update was successful.
+    #[inline]
     pub fn is_success(&self) -> bool {
         self.result == sys::CUgraphExecUpdateResult::CU_GRAPH_EXEC_UPDATE_SUCCESS
     }
@@ -785,8 +1077,13 @@ impl<'def> CudaGraphExec<'def> {
     /// If the topology matches, parameters are updated in-place. This is more
     /// efficient than destroying and re-instantiating the executable graph.
     ///
+    /// Returns an error if the graph definition belongs to a different context.
+    ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g27a7df53a4a5e4a9c3d4d3b5a8a9c3b0)
     pub fn update(&mut self, graph: &CudaGraphDef) -> Result<GraphUpdateResult, DriverError> {
+        if !Arc::ptr_eq(self.ctx, &graph.ctx) {
+            return Err(DriverError(sys::cudaError_enum::CUDA_ERROR_INVALID_CONTEXT));
+        }
         self.ctx.bind_to_thread()?;
         let (result, error_node) =
             unsafe { result::graph::exec_update(self.cu_graph_exec, graph.cu_graph) }?;
@@ -808,6 +1105,7 @@ impl<'def> CudaGraphExec<'def> {
     ///
     /// **You must not free/destroy the exec handle**, as it is still
     /// owned by this [CudaGraphExec].
+    #[inline]
     pub fn cu_graph_exec(&self) -> sys::CUgraphExec {
         self.cu_graph_exec
     }
