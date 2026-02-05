@@ -528,13 +528,12 @@ impl CudaGraphDef {
     pub fn instantiate(
         &self,
         flags: sys::CUgraphInstantiate_flags,
-    ) -> Result<CudaGraphExec<'_>, DriverError> {
+    ) -> Result<CudaGraphExec, DriverError> {
         self.ctx.bind_to_thread()?;
         let cu_graph_exec = unsafe { result::graph::instantiate(self.cu_graph, flags) }?;
         Ok(CudaGraphExec {
             cu_graph_exec,
-            ctx: &self.ctx,
-            _marker: PhantomData,
+            ctx: self.ctx.clone(),
             _not_send_sync: PhantomData,
         })
     }
@@ -835,15 +834,14 @@ impl CudaGraphDef {
 /// > Executable graph objects (cudaGraphExec_t, CUgraphExec) are not internally synchronized and must not be accessed concurrently from multiple threads. API calls accessing the same cudaGraphExec_t must be serialized externally.
 ///
 /// <https://docs.nvidia.com/cuda/cuda-driver-api/graphs-thread-safety.html#graphs-thread-safety>
-pub struct CudaGraphExec<'def> {
+pub struct CudaGraphExec {
     pub(crate) cu_graph_exec: sys::CUgraphExec,
-    pub(crate) ctx: &'def Arc<CudaContext>,
-    pub(crate) _marker: PhantomData<&'def CudaGraphDef>,
+    pub(crate) ctx: Arc<CudaContext>,
     // Prevent auto-impl of Send/Sync - CUDA graphs are NOT thread-safe
     _not_send_sync: PhantomData<*const ()>,
 }
 
-impl Drop for CudaGraphExec<'_> {
+impl Drop for CudaGraphExec {
     fn drop(&mut self) {
         self.ctx.record_err(self.ctx.bind_to_thread());
         let cu_graph_exec = std::mem::replace(&mut self.cu_graph_exec, std::ptr::null_mut());
@@ -854,7 +852,7 @@ impl Drop for CudaGraphExec<'_> {
     }
 }
 
-impl std::fmt::Debug for CudaGraphExec<'_> {
+impl std::fmt::Debug for CudaGraphExec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CudaGraphExec")
             .field("cu_graph_exec", &self.cu_graph_exec)
@@ -893,12 +891,12 @@ impl GraphUpdateResult {
     }
 }
 
-impl<'def> CudaGraphExec<'def> {
+impl CudaGraphExec {
     /// Launches this executable graph on the given stream.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g6b2dceb3901e71a390d2bd8b0491e471)
     pub fn launch(&self, stream: &CudaStream) -> Result<(), DriverError> {
-        if self.ctx != &stream.ctx {
+        if self.ctx != stream.ctx {
             return Err(DriverError(sys::cudaError_enum::CUDA_ERROR_INVALID_CONTEXT));
         }
         self.ctx.bind_to_thread()?;
@@ -920,7 +918,7 @@ impl<'def> CudaGraphExec<'def> {
     #[cfg(cuda_11_only)]
     pub unsafe fn set_kernel_node_params(
         &mut self,
-        node: &CudaGraphNode<'def>,
+        node: &CudaGraphNode<'_>,
         params: &KernelNodeParams,
         args: &mut [*mut std::ffi::c_void],
     ) -> Result<(), DriverError> {
@@ -957,7 +955,7 @@ impl<'def> CudaGraphExec<'def> {
     #[cfg(cuda_12_plus)]
     pub unsafe fn set_kernel_node_params(
         &mut self,
-        node: &CudaGraphNode<'def>,
+        node: &CudaGraphNode<'_>,
         params: &KernelNodeParams,
         args: &mut [*mut std::ffi::c_void],
     ) -> Result<(), DriverError> {
@@ -995,7 +993,7 @@ impl<'def> CudaGraphExec<'def> {
     /// - The node must be a kernel node from the graph that was used to create this executable.
     pub unsafe fn set_kernel_node_args(
         &mut self,
-        node: &CudaGraphNode<'def>,
+        node: &CudaGraphNode<'_>,
         args: &mut [*mut std::ffi::c_void],
     ) -> Result<(), DriverError> {
         self.ctx.bind_to_thread()?;
@@ -1028,7 +1026,7 @@ impl<'def> CudaGraphExec<'def> {
     /// - The node must be a memcpy node from the graph that was used to create this executable.
     pub unsafe fn set_memcpy_node_params(
         &mut self,
-        node: &CudaGraphNode<'def>,
+        node: &CudaGraphNode<'_>,
         dst: sys::CUdeviceptr,
         src: sys::CUdeviceptr,
         size: usize,
@@ -1081,7 +1079,7 @@ impl<'def> CudaGraphExec<'def> {
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g27a7df53a4a5e4a9c3d4d3b5a8a9c3b0)
     pub fn update(&mut self, graph: &CudaGraphDef) -> Result<GraphUpdateResult, DriverError> {
-        if !Arc::ptr_eq(self.ctx, &graph.ctx) {
+        if !Arc::ptr_eq(&self.ctx, &graph.ctx) {
             return Err(DriverError(sys::cudaError_enum::CUDA_ERROR_INVALID_CONTEXT));
         }
         self.ctx.bind_to_thread()?;
