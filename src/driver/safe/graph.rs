@@ -524,17 +524,21 @@ impl CudaGraphDef {
 
     /// Instantiates the graph for execution.
     ///
+    /// The returned [CudaGraphExec] is lifetime-bound to this graph definition,
+    /// ensuring that node handles used for parameter updates always come from
+    /// this graph.
+    ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gb53b435e178cccfa37ac87285d2c3fa1)
     pub fn instantiate(
         &self,
         flags: sys::CUgraphInstantiate_flags,
-    ) -> Result<CudaGraphExec, DriverError> {
+    ) -> Result<CudaGraphExec<'_>, DriverError> {
         self.ctx.bind_to_thread()?;
         let cu_graph_exec = unsafe { result::graph::instantiate(self.cu_graph, flags) }?;
         Ok(CudaGraphExec {
             cu_graph_exec,
             ctx: self.ctx.clone(),
-            _not_send_sync: PhantomData,
+            _marker: PhantomData,
         })
     }
 
@@ -825,6 +829,19 @@ impl CudaGraphDef {
 ///
 /// Created by calling [CudaGraphDef::instantiate].
 ///
+/// The `'graph` lifetime ties this executable to its source [CudaGraphDef]. This ensures
+/// that [CudaGraphNode] handles used for parameter updates always come from the correct graph,
+/// preventing misuse at compile time:
+///
+/// ```compile_fail
+/// let def_a = stream.end_capture_graph()?.unwrap();
+/// let def_b = stream.end_capture_graph()?.unwrap();
+/// let mut exec_a = def_a.instantiate(0)?;
+/// let nodes_b = def_b.nodes()?;
+/// // Error: lifetime mismatch - nodes_b has wrong 'graph lifetime
+/// unsafe { exec_a.set_kernel_node_args(&nodes_b[0], &mut args)?; }
+/// ```
+///
 /// # On Thread safety
 ///
 /// This object is **NOT** thread safe.
@@ -834,14 +851,15 @@ impl CudaGraphDef {
 /// > Executable graph objects (cudaGraphExec_t, CUgraphExec) are not internally synchronized and must not be accessed concurrently from multiple threads. API calls accessing the same cudaGraphExec_t must be serialized externally.
 ///
 /// <https://docs.nvidia.com/cuda/cuda-driver-api/graphs-thread-safety.html#graphs-thread-safety>
-pub struct CudaGraphExec {
+pub struct CudaGraphExec<'graph> {
     pub(crate) cu_graph_exec: sys::CUgraphExec,
     pub(crate) ctx: Arc<CudaContext>,
     // Prevent auto-impl of Send/Sync - CUDA graphs are NOT thread-safe
-    _not_send_sync: PhantomData<*const ()>,
+    // Also tracks the lifetime of the source CudaGraphDef
+    _marker: PhantomData<(&'graph CudaGraphDef, *const ())>,
 }
 
-impl Drop for CudaGraphExec {
+impl Drop for CudaGraphExec<'_> {
     fn drop(&mut self) {
         self.ctx.record_err(self.ctx.bind_to_thread());
         let cu_graph_exec = std::mem::replace(&mut self.cu_graph_exec, std::ptr::null_mut());
@@ -852,7 +870,7 @@ impl Drop for CudaGraphExec {
     }
 }
 
-impl std::fmt::Debug for CudaGraphExec {
+impl std::fmt::Debug for CudaGraphExec<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CudaGraphExec")
             .field("cu_graph_exec", &self.cu_graph_exec)
@@ -891,7 +909,7 @@ impl GraphUpdateResult {
     }
 }
 
-impl CudaGraphExec {
+impl<'graph> CudaGraphExec<'graph> {
     /// Launches this executable graph on the given stream.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g6b2dceb3901e71a390d2bd8b0491e471)
@@ -903,10 +921,19 @@ impl CudaGraphExec {
         unsafe { result::graph::launch(self.cu_graph_exec, stream.cu_stream) }
     }
 
+    /// Returns a reference to the CUDA context this executable was created in.
+    #[inline]
+    pub fn context(&self) -> &Arc<CudaContext> {
+        &self.ctx
+    }
+
     /// Updates the parameters of a kernel node in this executable graph.
     ///
     /// This allows changing kernel function, grid/block dimensions, shared memory,
     /// and kernel arguments without re-instantiating the graph.
+    ///
+    /// The node must come from the same graph this executable was instantiated from,
+    /// which is enforced at compile time via the `'graph` lifetime.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd84243569e4c3d6356b9f2eea20ed48c)
     ///
@@ -914,11 +941,10 @@ impl CudaGraphExec {
     ///
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
-    /// - The node must be a kernel node from the graph that was used to create this executable.
     #[cfg(cuda_11_only)]
     pub unsafe fn set_kernel_node_params(
         &mut self,
-        node: &CudaGraphNode<'_>,
+        node: &CudaGraphNode<'graph>,
         params: &KernelNodeParams,
         args: &mut [*mut std::ffi::c_void],
     ) -> Result<(), DriverError> {
@@ -945,17 +971,19 @@ impl CudaGraphExec {
     /// This allows changing kernel function, grid/block dimensions, shared memory,
     /// and kernel arguments without re-instantiating the graph.
     ///
+    /// The node must come from the same graph this executable was instantiated from,
+    /// which is enforced at compile time via the `'graph` lifetime.
+    ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd84243569e4c3d6356b9f2eea20ed48c)
     ///
     /// # Safety
     ///
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
-    /// - The node must be a kernel node from the graph that was used to create this executable.
     #[cfg(cuda_12_plus)]
     pub unsafe fn set_kernel_node_params(
         &mut self,
-        node: &CudaGraphNode<'_>,
+        node: &CudaGraphNode<'graph>,
         params: &KernelNodeParams,
         args: &mut [*mut std::ffi::c_void],
     ) -> Result<(), DriverError> {
@@ -984,16 +1012,18 @@ impl CudaGraphExec {
     /// This is a convenience wrapper that fetches the current node parameters
     /// and updates only the kernel arguments, preserving other settings.
     ///
+    /// The node must come from the same graph this executable was instantiated from,
+    /// which is enforced at compile time via the `'graph` lifetime.
+    ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gd84243569e4c3d6356b9f2eea20ed48c)
     ///
     /// # Safety
     ///
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
-    /// - The node must be a kernel node from the graph that was used to create this executable.
     pub unsafe fn set_kernel_node_args(
         &mut self,
-        node: &CudaGraphNode<'_>,
+        node: &CudaGraphNode<'graph>,
         args: &mut [*mut std::ffi::c_void],
     ) -> Result<(), DriverError> {
         self.ctx.bind_to_thread()?;
@@ -1017,16 +1047,18 @@ impl CudaGraphExec {
     ///
     /// This is a simplified interface for device-to-device memcpy updates.
     ///
+    /// The node must come from the same graph this executable was instantiated from,
+    /// which is enforced at compile time via the `'graph` lifetime.
+    ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g50a5c0a1a5a6b0c7b3e3d5a8a9c3b0d7)
     ///
     /// # Safety
     ///
     /// - `dst` and `src` must be valid device pointers.
     /// - The memory regions must remain valid until graph execution completes.
-    /// - The node must be a memcpy node from the graph that was used to create this executable.
     pub unsafe fn set_memcpy_node_params(
         &mut self,
-        node: &CudaGraphNode<'_>,
+        node: &CudaGraphNode<'graph>,
         dst: sys::CUdeviceptr,
         src: sys::CUdeviceptr,
         size: usize,
