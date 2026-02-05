@@ -819,22 +819,7 @@ pub mod stream {
     ///
     /// # Safety
     /// Stream must be valid
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080",
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090"
-    ))]
+    #[cfg(cuda_11_4_plus)]
     pub unsafe fn get_capture_info(stream: sys::CUstream) -> Result<CaptureInfo, DriverError> {
         let mut status = MaybeUninit::uninit();
         let mut id = MaybeUninit::uninit();
@@ -1626,22 +1611,7 @@ pub mod graph {
     ///
     /// # Safety
     /// graph must be valid
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080",
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090"
-    ))]
+    #[cfg(cuda_11_4_plus)]
     pub unsafe fn get_edges(
         graph: sys::CUgraph,
     ) -> Result<Vec<(sys::CUgraphNode, sys::CUgraphNode)>, DriverError> {
@@ -1710,13 +1680,7 @@ pub mod graph {
     /// # Safety
     /// graph_exec, node, and node_params must be valid.
     /// The kernel parameters (args) must match the kernel signature and remain valid.
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080"
-    ))]
+    #[cfg(cuda_11_only)]
     pub unsafe fn exec_kernel_node_set_params(
         graph_exec: sys::CUgraphExec,
         node: sys::CUgraphNode,
@@ -1732,19 +1696,7 @@ pub mod graph {
     /// # Safety
     /// graph_exec, node, and node_params must be valid.
     /// The kernel parameters (args) must match the kernel signature and remain valid.
-    #[cfg(any(
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090",
-        feature = "cuda-13000",
-        feature = "cuda-13010"
-    ))]
+    #[cfg(cuda_12_plus)]
     pub unsafe fn exec_kernel_node_set_params(
         graph_exec: sys::CUgraphExec,
         node: sys::CUgraphNode,
@@ -1777,13 +1729,7 @@ pub mod graph {
     ///
     /// # Safety
     /// graph_exec and graph must be valid
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080"
-    ))]
+    #[cfg(cuda_11_only)]
     pub unsafe fn exec_update(
         graph_exec: sys::CUgraphExec,
         graph: sys::CUgraph,
@@ -1808,19 +1754,7 @@ pub mod graph {
     ///
     /// # Safety
     /// graph_exec and graph must be valid
-    #[cfg(any(
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090",
-        feature = "cuda-13000",
-        feature = "cuda-13010"
-    ))]
+    #[cfg(cuda_12_plus)]
     pub unsafe fn exec_update(
         graph_exec: sys::CUgraphExec,
         graph: sys::CUgraph,
@@ -1837,13 +1771,7 @@ pub mod graph {
     ///
     /// # Safety
     /// node and node_params must be valid
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080"
-    ))]
+    #[cfg(cuda_11_only)]
     pub unsafe fn kernel_node_get_params(
         node: sys::CUgraphNode,
         node_params: *mut sys::CUDA_KERNEL_NODE_PARAMS,
@@ -1857,19 +1785,7 @@ pub mod graph {
     ///
     /// # Safety
     /// node and node_params must be valid
-    #[cfg(any(
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090",
-        feature = "cuda-13000",
-        feature = "cuda-13010"
-    ))]
+    #[cfg(cuda_12_plus)]
     pub unsafe fn kernel_node_get_params(
         node: sys::CUgraphNode,
         node_params: *mut sys::CUDA_KERNEL_NODE_PARAMS,

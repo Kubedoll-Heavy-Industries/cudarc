@@ -21,21 +21,6 @@ pub use self::launch::{LaunchArgs, LaunchConfig, PushKernelArg};
 pub use self::mem_pool::{CudaMemPool, MemPoolConfig};
 pub use self::profile::{profiler_start, profiler_stop, Profiler};
 pub use self::unified_memory::{UnifiedSlice, UnifiedView, UnifiedViewMut};
-#[cfg(any(
-    feature = "cuda-11040",
-    feature = "cuda-11050",
-    feature = "cuda-11060",
-    feature = "cuda-11070",
-    feature = "cuda-11080",
-    feature = "cuda-12000",
-    feature = "cuda-12010",
-    feature = "cuda-12020",
-    feature = "cuda-12030",
-    feature = "cuda-12040",
-    feature = "cuda-12050",
-    feature = "cuda-12060",
-    feature = "cuda-12080",
-    feature = "cuda-12090"
-))]
+#[cfg(cuda_11_4_plus)]
 pub use crate::driver::result::stream::CaptureInfo;
 pub use crate::driver::result::DriverError;

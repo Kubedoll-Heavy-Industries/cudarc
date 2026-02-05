@@ -24,6 +24,8 @@ pub struct CudaGraph {
     cu_graph: sys::CUgraph,
     cu_graph_exec: sys::CUgraphExec,
     stream: Arc<CudaStream>,
+    // Prevent auto-impl of Send/Sync - CUDA graphs are NOT thread-safe
+    _not_send_sync: PhantomData<*const ()>,
 }
 
 impl Drop for CudaGraph {
@@ -61,11 +63,19 @@ impl CudaStream {
         if cu_graph.is_null() {
             return Ok(None);
         }
-        let cu_graph_exec = unsafe { result::graph::instantiate(cu_graph, flags) }?;
+        // Clean up the graph if instantiation fails to prevent resource leak
+        let cu_graph_exec = match unsafe { result::graph::instantiate(cu_graph, flags) } {
+            Ok(exec) => exec,
+            Err(e) => {
+                let _ = unsafe { result::graph::destroy(cu_graph) };
+                return Err(e);
+            }
+        };
         Ok(Some(CudaGraph {
             cu_graph,
             cu_graph_exec,
             stream: self.clone(),
+            _not_send_sync: PhantomData,
         }))
     }
 
@@ -90,6 +100,7 @@ impl CudaStream {
         Ok(Some(CudaGraphDef {
             cu_graph,
             ctx: self.ctx.clone(),
+            _not_send_sync: PhantomData,
         }))
     }
 
@@ -106,22 +117,7 @@ impl CudaStream {
     /// Returns the capture status and unique capture sequence ID.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g9d22e54a0755b3b0e01dca4c9a9e70c8)
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080",
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090"
-    ))]
+    #[cfg(cuda_11_4_plus)]
     pub fn capture_info(&self) -> Result<result::stream::CaptureInfo, DriverError> {
         self.ctx.bind_to_thread()?;
         unsafe { result::stream::get_capture_info(self.cu_stream) }
@@ -231,13 +227,7 @@ impl CudaGraph {
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
     /// - The node must be a kernel node from this graph.
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080"
-    ))]
+    #[cfg(cuda_11_only)]
     pub unsafe fn update_kernel_node_params(
         &mut self,
         node: &CudaGraphNode<'_>,
@@ -269,19 +259,7 @@ impl CudaGraph {
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
     /// - The node must be a kernel node from this graph.
-    #[cfg(any(
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090",
-        feature = "cuda-13000",
-        feature = "cuda-13010"
-    ))]
+    #[cfg(cuda_12_plus)]
     pub unsafe fn update_kernel_node_params(
         &mut self,
         node: &CudaGraphNode<'_>,
@@ -399,8 +377,9 @@ pub struct CudaGraphNode<'graph> {
     pub(crate) _marker: PhantomData<&'graph CudaGraphDef>,
 }
 
-unsafe impl Send for CudaGraphNode<'_> {}
-unsafe impl Sync for CudaGraphNode<'_> {}
+// Note: CudaGraphNode is intentionally NOT Send/Sync because CUDA graphs
+// are not thread-safe. The node holds a raw handle that could become invalid
+// if the parent graph is modified/destroyed on another thread.
 
 impl<'graph> CudaGraphNode<'graph> {
     /// Returns the type of this graph node.
@@ -442,6 +421,8 @@ impl<'graph> CudaGraphNode<'graph> {
 pub struct CudaGraphDef {
     pub(crate) cu_graph: sys::CUgraph,
     pub(crate) ctx: Arc<CudaContext>,
+    // Prevent auto-impl of Send/Sync - CUDA graphs are NOT thread-safe
+    _not_send_sync: PhantomData<*const ()>,
 }
 
 impl Drop for CudaGraphDef {
@@ -489,22 +470,7 @@ impl CudaGraphDef {
     /// Returns all edges in the graph as (from, to) pairs.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1ge9d27a6b2ebca4d9e5f94c0c8c8b0e06)
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080",
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090"
-    ))]
+    #[cfg(cuda_11_4_plus)]
     pub fn edges(&self) -> Result<Vec<(CudaGraphNode<'_>, CudaGraphNode<'_>)>, DriverError> {
         self.ctx.bind_to_thread()?;
         let raw_edges = unsafe { result::graph::get_edges(self.cu_graph) }?;
@@ -538,6 +504,7 @@ impl CudaGraphDef {
             cu_graph_exec,
             ctx: &self.ctx,
             _marker: PhantomData,
+            _not_send_sync: PhantomData,
         })
     }
 
@@ -550,6 +517,7 @@ impl CudaGraphDef {
         Ok(CudaGraphDef {
             cu_graph: cloned_graph,
             ctx: self.ctx.clone(),
+            _not_send_sync: PhantomData,
         })
     }
 
@@ -588,6 +556,8 @@ pub struct CudaGraphExec<'def> {
     pub(crate) cu_graph_exec: sys::CUgraphExec,
     pub(crate) ctx: &'def Arc<CudaContext>,
     pub(crate) _marker: PhantomData<&'def CudaGraphDef>,
+    // Prevent auto-impl of Send/Sync - CUDA graphs are NOT thread-safe
+    _not_send_sync: PhantomData<*const ()>,
 }
 
 impl Drop for CudaGraphExec<'_> {
@@ -655,13 +625,7 @@ impl<'def> CudaGraphExec<'def> {
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
     /// - The node must be a kernel node from the graph that was used to create this executable.
-    #[cfg(any(
-        feature = "cuda-11040",
-        feature = "cuda-11050",
-        feature = "cuda-11060",
-        feature = "cuda-11070",
-        feature = "cuda-11080"
-    ))]
+    #[cfg(cuda_11_only)]
     pub unsafe fn set_kernel_node_params(
         &mut self,
         node: &CudaGraphNode<'def>,
@@ -698,19 +662,7 @@ impl<'def> CudaGraphExec<'def> {
     /// - `args` must match the kernel signature exactly.
     /// - Pointers in `args` must remain valid until graph execution completes.
     /// - The node must be a kernel node from the graph that was used to create this executable.
-    #[cfg(any(
-        feature = "cuda-12000",
-        feature = "cuda-12010",
-        feature = "cuda-12020",
-        feature = "cuda-12030",
-        feature = "cuda-12040",
-        feature = "cuda-12050",
-        feature = "cuda-12060",
-        feature = "cuda-12080",
-        feature = "cuda-12090",
-        feature = "cuda-13000",
-        feature = "cuda-13010"
-    ))]
+    #[cfg(cuda_12_plus)]
     pub unsafe fn set_kernel_node_params(
         &mut self,
         node: &CudaGraphNode<'def>,
