@@ -823,6 +823,18 @@ pub mod stream {
     pub unsafe fn get_capture_info(stream: sys::CUstream) -> Result<CaptureInfo, DriverError> {
         let mut status = MaybeUninit::uninit();
         let mut id = MaybeUninit::uninit();
+        #[cfg(cuda_13_plus)]
+        sys::cuStreamGetCaptureInfo_v3(
+            stream,
+            status.as_mut_ptr(),
+            id.as_mut_ptr(),
+            std::ptr::null_mut(), // graph - not needed
+            std::ptr::null_mut(), // dependencies
+            std::ptr::null_mut(), // edgeData
+            std::ptr::null_mut(), // numDependencies
+        )
+        .result()?;
+        #[cfg(not(cuda_13_plus))]
         sys::cuStreamGetCaptureInfo_v2(
             stream,
             status.as_mut_ptr(),
@@ -1617,6 +1629,16 @@ pub mod graph {
     ) -> Result<Vec<(sys::CUgraphNode, sys::CUgraphNode)>, DriverError> {
         // First call to get the number of edges
         let mut num_edges = MaybeUninit::uninit();
+        #[cfg(cuda_13_plus)]
+        sys::cuGraphGetEdges_v2(
+            graph,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(), // edgeData
+            num_edges.as_mut_ptr(),
+        )
+        .result()?;
+        #[cfg(not(cuda_13_plus))]
         sys::cuGraphGetEdges(
             graph,
             std::ptr::null_mut(),
@@ -1634,6 +1656,16 @@ pub mod graph {
         let mut from_nodes = vec![std::ptr::null_mut(); num_edges];
         let mut to_nodes = vec![std::ptr::null_mut(); num_edges];
         let mut actual_count = num_edges;
+        #[cfg(cuda_13_plus)]
+        sys::cuGraphGetEdges_v2(
+            graph,
+            from_nodes.as_mut_ptr(),
+            to_nodes.as_mut_ptr(),
+            std::ptr::null_mut(), // edgeData
+            &mut actual_count,
+        )
+        .result()?;
+        #[cfg(not(cuda_13_plus))]
         sys::cuGraphGetEdges(
             graph,
             from_nodes.as_mut_ptr(),
@@ -1926,6 +1958,16 @@ pub mod graph {
         to: *const sys::CUgraphNode,
         num_dependencies: usize,
     ) -> Result<(), DriverError> {
+        #[cfg(cuda_13_plus)]
+        return sys::cuGraphAddDependencies_v2(
+            graph,
+            from,
+            to,
+            std::ptr::null(), // edgeData
+            num_dependencies,
+        )
+        .result();
+        #[cfg(not(cuda_13_plus))]
         sys::cuGraphAddDependencies(graph, from, to, num_dependencies).result()
     }
 }
