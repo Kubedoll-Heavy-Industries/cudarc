@@ -273,7 +273,7 @@ impl LaunchArgs<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::driver::{CudaContext, DriverError};
+    use crate::driver::{CudaContext, DriverError, TryClone};
     #[cfg(feature = "nvrtc")]
     use crate::nvrtc::compile_ptx_with_opts;
 
@@ -354,7 +354,7 @@ extern \"C\" __global__ void sin_kernel(float *out, const float *inp, size_t num
         let a_host = [-1.0f32, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8];
 
         let a_dev = stream.clone_htod(&a_host).unwrap();
-        let mut b_dev = a_dev.clone();
+        let mut b_dev = a_dev.try_clone().unwrap();
 
         unsafe {
             stream
@@ -421,7 +421,7 @@ extern \"C\" __global__ void sin_kernel(float *out, const float *inp, size_t num
 
         let a_host = [-1.0f32, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8];
         let a_dev = stream.clone_htod(&a_host).unwrap();
-        let mut b_dev = a_dev.clone();
+        let mut b_dev = a_dev.try_clone().unwrap();
 
         for i in 0..5 {
             let a_sub = a_dev.try_slice(i * 2..).unwrap();

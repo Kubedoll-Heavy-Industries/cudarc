@@ -1,5 +1,5 @@
 use cudarc::{
-    driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg},
+    driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg, TryClone},
     nvrtc::Ptx,
 };
 
@@ -16,7 +16,7 @@ fn main() -> Result<(), DriverError> {
     let a_host = [1.0, 2.0, 3.0];
 
     let a_dev = stream.clone_htod(&a_host)?;
-    let mut b_dev = a_dev.clone();
+    let mut b_dev = a_dev.try_clone()?;
 
     // we use a buidler pattern to launch kernels.
     let n = 3i32;

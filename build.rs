@@ -78,6 +78,12 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CUDARC_CUDA_VERSION");
+
+    // Declare our semantic cfg flags to avoid check-cfg warnings
+    println!("cargo::rustc-check-cfg=cfg(cuda_11_4_plus)");
+    println!("cargo::rustc-check-cfg=cfg(cuda_12_plus)");
+    println!("cargo::rustc-check-cfg=cfg(cuda_13_plus)");
+    println!("cargo::rustc-check-cfg=cfg(cuda_11_only)");
     TYPICAL_CUDA_PATH_ENV_VARS
         .iter()
         .for_each(|var| println!("cargo:rerun-if-env-changed={var}"));
@@ -101,6 +107,21 @@ fn main() {
 
     println!("cargo:rustc-env=CUDA_MAJOR_VERSION={major}");
     println!("cargo:rustc-env=CUDA_MINOR_VERSION={minor}");
+
+    // Emit semantic cfg flags for version-specific code
+    // These allow code to use `#[cfg(cuda_11_4_plus)]` instead of listing 15+ features
+    if major >= 11 && (major > 11 || minor >= 4) {
+        println!("cargo:rustc-cfg=cuda_11_4_plus");
+    }
+    if major >= 12 {
+        println!("cargo:rustc-cfg=cuda_12_plus");
+    }
+    if major >= 13 {
+        println!("cargo:rustc-cfg=cuda_13_plus");
+    }
+    if major == 11 {
+        println!("cargo:rustc-cfg=cuda_11_only");
+    }
 
     #[cfg(feature = "dynamic-linking")]
     dynamic_linking(major, minor);

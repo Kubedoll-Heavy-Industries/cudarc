@@ -18,7 +18,10 @@ impl Cudnn {
     /// Creates a new cudnn handle and sets the stream to the `device`'s stream.
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(stream: Arc<CudaStream>) -> Result<Arc<Self>, CudnnError> {
-        stream.context().bind_to_thread().unwrap();
+        stream
+            .context()
+            .bind_to_thread()
+            .expect("failed to bind CUDA context to thread");
         let handle = result::create_handle()?;
         unsafe { result::set_stream(handle, stream.cu_stream as *mut _) }?;
         Ok(Arc::new(Self { handle, stream }))
@@ -40,7 +43,11 @@ impl Drop for Cudnn {
     fn drop(&mut self) {
         let handle = std::mem::replace(&mut self.handle, std::ptr::null_mut());
         if !handle.is_null() {
-            unsafe { result::destroy_handle(handle) }.unwrap();
+            if let Err(e) = unsafe { result::destroy_handle(handle) } {
+                // Log but don't panic - Drop should not panic
+                #[cfg(feature = "std")]
+                eprintln!("cudarc: failed to destroy cudnn handle: {:?}", e);
+            }
         }
     }
 }
@@ -172,7 +179,11 @@ impl<T> Drop for TensorDescriptor<T> {
     fn drop(&mut self) {
         let desc = std::mem::replace(&mut self.desc, std::ptr::null_mut());
         if !desc.is_null() {
-            unsafe { result::destroy_tensor_descriptor(desc) }.unwrap()
+            if let Err(e) = unsafe { result::destroy_tensor_descriptor(desc) } {
+                // Log but don't panic - Drop should not panic
+                #[cfg(feature = "std")]
+                eprintln!("cudarc: failed to destroy tensor descriptor: {:?}", e);
+            }
         }
     }
 }
