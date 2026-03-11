@@ -468,6 +468,18 @@ impl std::fmt::Debug for CudaGraphDef {
 }
 
 impl CudaGraphDef {
+    /// Export the graph to a DOT file for debugging.
+    ///
+    /// Uses `cuGraphDebugDotPrint` to write a Graphviz DOT representation
+    /// to the specified path. Useful for inspecting graph topology and
+    /// kernel arguments.
+    pub fn debug_dot_print(&self, path: &str) -> Result<(), DriverError> {
+        self.ctx.bind_to_thread()?;
+        let c_path = std::ffi::CString::new(path)
+            .map_err(|_| DriverError(sys::cudaError_enum::CUDA_ERROR_INVALID_VALUE))?;
+        unsafe { sys::cuGraphDebugDotPrint(self.cu_graph, c_path.as_ptr(), 0) }.result()
+    }
+
     /// Returns all nodes in the graph.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g048f6e36f5d7e0ad5f6e2ab38ee37e55)

@@ -59,6 +59,36 @@ impl CudaBlas {
         unsafe { result::set_stream(self.handle, self.stream.cu_stream() as _) }
     }
 
+    /// Redirect this handle to a different stream without taking ownership.
+    ///
+    /// Unlike [`set_stream`](Self::set_stream) this does not update the stored `Arc<CudaStream>`,
+    /// making it suitable for temporary stream redirects (e.g., CUDA graph capture) where
+    /// you want to restore the original stream afterwards.
+    ///
+    /// # Safety
+    /// - No cuBLAS work may be in-flight when the stream is changed.
+    /// - The caller must restore the original stream before any concurrent access.
+    pub unsafe fn set_stream_unchecked(&self, stream: &CudaStream) -> Result<(), CublasError> {
+        result::set_stream(self.handle, stream.cu_stream() as _)
+    }
+
+    /// Pre-allocate a device workspace buffer for cuBLAS operations.
+    ///
+    /// Prevents cuBLAS from calling `cudaMallocAsync` during the first matmul,
+    /// which would insert a memory allocation node into a CUDA graph capture
+    /// and make the captured graph dependent on the async memory pool.
+    ///
+    /// # Safety
+    /// - `workspace` must be a valid device pointer of at least `size_bytes`.
+    /// - The allocation must remain live for as long as this handle is used.
+    pub unsafe fn set_workspace(
+        &self,
+        workspace: *mut core::ffi::c_void,
+        size_bytes: usize,
+    ) -> Result<(), CublasError> {
+        result::set_workspace(self.handle, workspace, size_bytes)
+    }
+
     /// Set the handle's pointer mode.
     /// ref: <https://docs.nvidia.com/cuda/cublas/#cublassetpointermode>
     ///

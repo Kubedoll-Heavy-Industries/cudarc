@@ -57,6 +57,26 @@ pub unsafe fn set_stream(
     sys::cublasSetStream_v2(handle, stream).result()
 }
 
+/// Set a pre-allocated device workspace for cuBLAS operations.
+///
+/// Prevents cuBLAS from calling `cudaMallocAsync` during the first matmul,
+/// which would insert a memory allocation node into a CUDA graph capture.
+///
+/// See [nvidia docs](https://docs.nvidia.com/cuda/cublas/index.html#cublassetworkspace)
+///
+/// # Safety
+///
+/// - `handle` must be a valid cuBLAS handle.
+/// - `workspace` must be a valid device pointer allocated with at least `size_bytes`.
+/// - The workspace allocation must remain live for as long as this handle is used.
+pub unsafe fn set_workspace(
+    handle: sys::cublasHandle_t,
+    workspace: *mut core::ffi::c_void,
+    size_bytes: usize,
+) -> Result<(), CublasError> {
+    sys::cublasSetWorkspace_v2(handle, workspace, size_bytes).result()
+}
+
 /// Single precision matrix vector multiplication. See
 /// [nvidia docs](https://docs.nvidia.com/cuda/cublas/index.html#cublas-t-gemv)
 ///
