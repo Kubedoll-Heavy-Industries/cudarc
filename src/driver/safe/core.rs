@@ -28,10 +28,16 @@ pub struct CudaContext {
     pub(crate) cu_device: sys::CUdevice,
     pub(crate) cu_ctx: sys::CUcontext,
     pub(crate) ordinal: usize,
-    pub(crate) has_async_alloc: bool,
+    pub(crate) has_async_alloc: AtomicBool,
     pub(crate) num_streams: AtomicUsize,
     pub(crate) event_tracking: AtomicBool,
     pub(crate) error_state: AtomicU32,
+    /// When true, `CudaSlice::Drop` retains memory instead of freeing it.
+    /// Used during CUDA graph capture to keep addresses stable for replay.
+    pub(crate) capture_retain: AtomicBool,
+    /// Retained device pointers from `CudaSlice` drops during capture.
+    /// Freed when the captured graph is destroyed.
+    pub(crate) retained_ptrs: std::sync::Mutex<Vec<sys::CUdeviceptr>>,
 }
 
 unsafe impl Send for CudaContext {}
@@ -73,10 +79,12 @@ impl CudaContext {
             cu_device,
             cu_ctx,
             ordinal,
-            has_async_alloc,
+            has_async_alloc: AtomicBool::new(has_async_alloc),
             num_streams: AtomicUsize::new(0),
             event_tracking: AtomicBool::new(true),
             error_state: AtomicU32::new(0),
+            capture_retain: AtomicBool::new(false),
+            retained_ptrs: std::sync::Mutex::new(Vec::new()),
         });
         ctx.bind_to_thread()?;
         Ok(ctx)
@@ -299,6 +307,70 @@ impl CudaContext {
     /// - Ensure that a [CudaSlice] is not written two concurrently by multiple streams.
     pub unsafe fn disable_event_tracking(&self) {
         self.event_tracking.store(false, Ordering::Relaxed);
+    }
+
+    /// Enable capture-retain mode for CUDA graph capture.
+    ///
+    /// When enabled:
+    /// - `CudaSlice::Drop` retains memory instead of freeing it
+    /// - `cuMemAllocAsync` continues normally (captured as graph memory nodes)
+    /// - `CudaSlice::Drop` retains pointers instead of calling `cuMemFreeAsync`
+    ///
+    /// This produces a graph with MEM_ALLOC + KERNEL nodes but no MEM_FREE
+    /// nodes. On replay, the CUDA runtime reuses the same virtual addresses
+    /// for graph memory allocations, so kernel arguments remain valid.
+    ///
+    /// Call [`take_retained_ptrs`](Self::take_retained_ptrs) after capture to
+    /// get the retained pointers, and free them when the graph is destroyed.
+    pub fn enable_capture_retain(&self) {
+        self.capture_retain.store(true, Ordering::Relaxed);
+    }
+
+    /// Disable capture-retain mode.
+    ///
+    /// Call this after `cuStreamEndCapture` completes.
+    pub fn disable_capture_retain(&self) {
+        self.capture_retain.store(false, Ordering::Relaxed);
+    }
+
+    /// Take all retained device pointers accumulated during capture.
+    ///
+    /// Returns the pointers and clears the internal list. The caller owns
+    /// these pointers and must free them (via `cuMemFree`) when the captured
+    /// graph is no longer needed.
+    pub fn take_retained_ptrs(&self) -> Vec<sys::CUdeviceptr> {
+        std::mem::take(&mut *self.retained_ptrs.lock().unwrap())
+    }
+
+    /// Force synchronous allocation mode (`cudaMalloc`).
+    ///
+    /// When async alloc is disabled, [`CudaStream::alloc`] uses `cudaMalloc`
+    /// instead of `cudaMallocAsync`. During CUDA graph stream capture this
+    /// means allocations happen immediately and are NOT recorded as graph
+    /// nodes — the resulting addresses are stable and persist across replays.
+    ///
+    /// # Safety
+    ///
+    /// `cudaMalloc` is a synchronous call that implicitly synchronizes the
+    /// device. The caller must ensure no async work depends on allocation
+    /// ordering. Pair with [`enable_async_alloc`](Self::enable_async_alloc)
+    /// to restore normal behavior after capture.
+    pub unsafe fn disable_async_alloc(&self) {
+        self.has_async_alloc.store(false, Ordering::Relaxed);
+    }
+
+    /// Restore asynchronous allocation mode (`cudaMallocAsync`).
+    ///
+    /// # Safety
+    ///
+    /// Must only be called to undo a prior [`disable_async_alloc`](Self::disable_async_alloc).
+    pub unsafe fn enable_async_alloc(&self) {
+        self.has_async_alloc.store(true, Ordering::Relaxed);
+    }
+
+    /// Check whether async alloc (`cudaMallocAsync`) is currently enabled.
+    pub fn is_async_alloc(&self) -> bool {
+        self.has_async_alloc.load(Ordering::Relaxed)
     }
 
     /// Checks to see if there have been any calls that stored an Err in a function
@@ -610,7 +682,15 @@ impl<T> Drop for CudaSlice<T> {
         if let Some(write) = self.write.as_ref() {
             ctx.record_err(self.stream.wait(write));
         }
-        if ctx.has_async_alloc {
+        // During CUDA graph capture with retain mode: push the pointer to the
+        // retain list instead of freeing. The graph's kernel nodes reference
+        // these addresses, so the memory must stay alive until the graph is
+        // destroyed.
+        if ctx.capture_retain.load(Ordering::Relaxed) {
+            ctx.retained_ptrs.lock().unwrap().push(self.cu_device_ptr);
+            return;
+        }
+        if ctx.has_async_alloc.load(Ordering::Relaxed) {
             ctx.record_err(unsafe {
                 result::free_async(self.cu_device_ptr, self.stream.cu_stream)
             });
@@ -1307,7 +1387,7 @@ impl CudaStream {
     /// Allocates an empty [CudaSlice] with 0 length.
     pub fn null<T>(self: &Arc<Self>) -> Result<CudaSlice<T>, result::DriverError> {
         self.ctx.bind_to_thread()?;
-        let cu_device_ptr = if self.ctx.has_async_alloc {
+        let cu_device_ptr = if self.ctx.has_async_alloc.load(Ordering::Relaxed) {
             unsafe { result::malloc_async(self.cu_stream, 0) }?
         } else {
             unsafe { result::malloc_sync(0) }?
@@ -1330,7 +1410,7 @@ impl CudaStream {
         len: usize,
     ) -> Result<CudaSlice<T>, DriverError> {
         self.ctx.bind_to_thread()?;
-        let cu_device_ptr = if self.ctx.has_async_alloc {
+        let cu_device_ptr = if self.ctx.has_async_alloc.load(Ordering::Relaxed) {
             result::malloc_async(self.cu_stream, len * std::mem::size_of::<T>())?
         } else {
             result::malloc_sync(len * std::mem::size_of::<T>())?
@@ -1397,6 +1477,12 @@ impl CudaStream {
     }
 
     /// Copy a `[T]`/`Vec<T>`/[`PinnedHostSlice<T>`] into an existing [`CudaSlice`]/[`CudaViewMut`].
+    ///
+    /// When the stream is in capture mode, this automatically uses synchronous
+    /// `cuMemcpyHtoD` instead of `cuMemcpyHtoDAsync`. Synchronous copies are
+    /// **not** recorded into the graph, which is correct for constant metadata
+    /// (shapes, strides) that doesn't change between replays. This prevents
+    /// stale host-pointer references in the captured graph.
     pub fn memcpy_htod<T: DeviceRepr, Src: HostSlice<T> + ?Sized, Dst: DevicePtrMut<T>>(
         self: &Arc<Self>,
         src: &Src,
@@ -1406,7 +1492,14 @@ impl CudaStream {
         self.ctx.bind_to_thread()?;
         let (src, _record_src) = unsafe { src.stream_synced_slice(self) };
         let (dst, _record_dst) = dst.device_ptr_mut(self);
-        unsafe { result::memcpy_htod_async(dst, src, self.cu_stream) }
+        // During graph capture, use synchronous HtoD to avoid baking a host
+        // stack pointer into the graph. The data reaches the GPU immediately
+        // and kernels can reference it, but the copy itself is NOT a graph node.
+        if self.is_capturing().unwrap_or(false) {
+            unsafe { result::memcpy_htod_sync(dst, src) }
+        } else {
+            unsafe { result::memcpy_htod_async(dst, src, self.cu_stream) }
+        }
     }
 
     /// Copy a [`CudaSlice`]/[`CudaView`] to a new [`Vec<T>`].
