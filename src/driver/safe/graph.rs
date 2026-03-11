@@ -542,6 +542,22 @@ impl CudaGraphDef {
         })
     }
 
+    /// Instantiate the graph with raw flags (u64). Use this when the flags value
+    /// is 0 (no flags), since the `CUgraphInstantiate_flags` enum has no 0 variant.
+    pub fn instantiate_raw(
+        &self,
+        flags: u64,
+    ) -> Result<CudaGraphExec<'_>, DriverError> {
+        self.ctx.bind_to_thread()?;
+        let cu_graph_exec =
+            unsafe { result::graph::instantiate_raw(self.cu_graph, flags) }?;
+        Ok(CudaGraphExec {
+            cu_graph_exec,
+            ctx: self.ctx.clone(),
+            _marker: PhantomData,
+        })
+    }
+
     /// Creates a clone of this graph.
     ///
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g9d5cfeb00b8ee918ea3c6f0816b4d8ef)

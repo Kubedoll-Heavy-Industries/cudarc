@@ -1389,6 +1389,18 @@ pub mod graph {
         Ok(graph_exec.assume_init())
     }
 
+    /// # Safety
+    /// graph must be valid
+    pub unsafe fn instantiate_raw(
+        graph: sys::CUgraph,
+        flags: u64,
+    ) -> Result<sys::CUgraphExec, DriverError> {
+        let mut graph_exec = MaybeUninit::uninit();
+        sys::cuGraphInstantiateWithFlags(graph_exec.as_mut_ptr(), graph, flags)
+            .result()?;
+        Ok(graph_exec.assume_init())
+    }
+
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1ga32ad4944cc5d408158207c978bc43a7)
     /// # Safety
     /// graph_exec must be valid
