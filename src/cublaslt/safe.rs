@@ -16,11 +16,20 @@ use std::sync::Arc;
 ///
 /// Note: This maintains a instance of [`Arc<CudaDevice>`], so will prevent the device
 /// from being dropped. Kernels will be launched on the device device default stream.
-#[derive(Debug)]
 pub struct CudaBlasLT {
     handle: sys::cublasLtHandle_t,
     workspace: Workspace,
-    stream: Arc<CudaStream>,
+    /// Current stream. Wrapped in `UnsafeCell` to support `set_stream_unchecked`,
+    /// which must redirect CUDA graph captures without taking `&mut self`.
+    stream: std::cell::UnsafeCell<Arc<CudaStream>>,
+}
+
+impl core::fmt::Debug for CudaBlasLT {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CudaBlasLT")
+            .field("handle", &self.handle)
+            .finish()
+    }
 }
 
 unsafe impl Send for CudaBlasLT {}
@@ -34,8 +43,28 @@ impl CudaBlasLT {
         Ok(Self {
             handle,
             workspace,
-            stream,
+            stream: std::cell::UnsafeCell::new(stream),
         })
+    }
+
+    /// Redirect this handle to a different stream without taking ownership.
+    ///
+    /// Unlike cuBLAS (which uses `cublasSetStream`), cuBLASLt passes the stream
+    /// directly to each `cublasLtMatmul` call. Updating the stored stream here
+    /// ensures that subsequent matmul calls — and workspace pointer acquisition —
+    /// use the new stream.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that:
+    /// - No in-flight cublasLt work is executing on the old stream.
+    /// - No concurrent calls to `matmul` or `set_stream_unchecked` are in flight.
+    /// - The workspace buffer allocated at construction time is accessible from `stream`
+    ///   (guaranteed when both streams share the same device context).
+    pub unsafe fn set_stream_unchecked(&self, stream: &Arc<CudaStream>) {
+        // SAFETY: The caller guarantees exclusive access (no concurrent matmul calls).
+        // `UnsafeCell` provides the legal interior-mutability anchor.
+        *self.stream.get() = stream.clone();
     }
 }
 
@@ -436,7 +465,10 @@ impl MatmulShared for CudaBlasLT {
     }
 
     fn stream(&self) -> &Arc<CudaStream> {
-        &self.stream
+        // SAFETY: `stream` is only mutated by `set_stream_unchecked`, which requires
+        // the caller to guarantee no concurrent matmul calls. During normal (non-capture)
+        // operation the stream is never mutated, so shared reads are safe.
+        unsafe { &*self.stream.get() }
     }
 }
 
