@@ -176,7 +176,9 @@ impl Workspace {
         let major = stream
             .context()
             .attribute(CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)?;
-        let workspace_size = if major >= 9 { 33_554_432 } else { 4_194_304 };
+        // 32 MB workspace unlocks more algorithm candidates in cuBLASLt heuristic.
+        // NVIDIA recommends 32 MB for SM 8.0+; 4 MB is conservative minimum.
+        let workspace_size = if major >= 8 { 33_554_432 } else { 4_194_304 };
 
         let buffer = unsafe { stream.alloc::<u8>(workspace_size)? };
         Ok(Self {
