@@ -16,6 +16,9 @@ pub struct GemmConfig<T> {
     pub ldb: c_int,
     pub beta: T,
     pub ldc: c_int,
+    /// GEMM algorithm selection. Default: `CUBLAS_GEMM_DEFAULT`.
+    /// Set to `CUBLAS_GEMM_AUTOTUNE` (999) for automatic per-shape tuning.
+    pub algo: sys::cublasGemmAlgo_t,
 }
 
 /// Configuration for [Gemm] strided batched call
@@ -92,7 +95,7 @@ impl Gemm<half::f16> for CudaBlas {
             sys::cudaDataType_t::CUDA_R_16F,
             cfg.ldc,
             sys::cublasComputeType_t::CUBLAS_COMPUTE_32F,
-            sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+            cfg.algo,
         )
     }
     unsafe fn gemm_strided_batched<
@@ -134,7 +137,7 @@ impl Gemm<half::f16> for CudaBlas {
             cfg.stride_c,
             cfg.batch_size,
             sys::cublasComputeType_t::CUBLAS_COMPUTE_32F,
-            sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+            cfg.gemm.algo,
         )
     }
 }
@@ -176,7 +179,7 @@ impl Gemm<half::bf16> for CudaBlas {
             sys::cudaDataType_t::CUDA_R_16BF,
             cfg.ldc,
             sys::cublasComputeType_t::CUBLAS_COMPUTE_32F,
-            sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+            cfg.algo,
         )
     }
     unsafe fn gemm_strided_batched<
@@ -218,7 +221,7 @@ impl Gemm<half::bf16> for CudaBlas {
             cfg.stride_c,
             cfg.batch_size,
             sys::cublasComputeType_t::CUBLAS_COMPUTE_32F,
-            sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+            cfg.gemm.algo,
         )
     }
 }
@@ -436,6 +439,7 @@ mod tests {
                     ldb: K as i32,
                     beta: half::f16::from_f32(0.0),
                     ldc: N as i32,
+                    algo: sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
                 },
                 &b_dev,
                 &a_dev,
@@ -483,6 +487,7 @@ mod tests {
                     ldb: K as i32,
                     beta: half::bf16::from_f32(0.0),
                     ldc: N as i32,
+                    algo: sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
                 },
                 &b_dev,
                 &a_dev,
@@ -552,6 +557,7 @@ mod tests {
                     ldb: K as i32,
                     beta: 0.0,
                     ldc: N as i32,
+                    algo: sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
                 },
                 &b_dev,
                 &a_dev,
@@ -617,6 +623,7 @@ mod tests {
                     ldb: K as i32,
                     beta: 0.0,
                     ldc: N as i32,
+                    algo: sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
                 },
                 &b_dev,
                 &a_dev,
