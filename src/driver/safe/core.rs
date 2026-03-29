@@ -101,6 +101,12 @@ impl CudaContext {
             retained_ptrs: std::sync::Mutex::new(Vec::new()),
         });
         ctx.bind_to_thread()?;
+        tracing::info!(
+            device = ordinal,
+            async_alloc = has_async_alloc,
+            "CUDA device init: async alloc (cudaMallocAsync / memory pools) {}",
+            if has_async_alloc { "ENABLED (SM8+)" } else { "DISABLED (pre-SM8 or pools unsupported)" }
+        );
         Ok(ctx)
     }
 
