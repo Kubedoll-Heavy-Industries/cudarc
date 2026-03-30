@@ -1659,6 +1659,48 @@ impl CudaStream {
         })
     }
 
+    /// Allocate with synchronous `cuMemAlloc`, bypassing the async memory pool.
+    ///
+    /// Required for buffers that must be registered with cuFile (GPUDirect Storage)
+    /// or other subsystems incompatible with `cudaMallocAsync` pool allocations.
+    ///
+    /// # Safety
+    /// Same as [`alloc`]: the returned memory is uninitialized.
+    pub unsafe fn alloc_sync<T: DeviceRepr>(
+        self: &Arc<Self>,
+        len: usize,
+    ) -> Result<CudaSlice<T>, DriverError> {
+        self.ctx.bind_to_thread()?;
+        let cu_device_ptr = result::malloc_sync(len * std::mem::size_of::<T>())?;
+        let (read, write) = if self.ctx.is_event_tracking() {
+            (
+                Some(self.ctx.new_event(None)?),
+                Some(self.ctx.new_event(None)?),
+            )
+        } else {
+            (None, None)
+        };
+        Ok(CudaSlice {
+            cu_device_ptr,
+            len,
+            read,
+            write,
+            stream: self.clone(),
+            marker: PhantomData,
+        })
+    }
+
+    /// Allocates with sync `cuMemAlloc` and zeros the memory.
+    /// See [`alloc_sync`] for when this is needed over [`alloc_zeros`].
+    pub fn alloc_zeros_sync<T: DeviceRepr + ValidAsZeroBits>(
+        self: &Arc<Self>,
+        len: usize,
+    ) -> Result<CudaSlice<T>, DriverError> {
+        let mut dst = unsafe { self.alloc_sync(len) }?;
+        self.memset_zeros(&mut dst)?;
+        Ok(dst)
+    }
+
     /// Allocates a [CudaSlice] with `len` elements of type `T`. All values are zero'd out.
     pub fn alloc_zeros<T: DeviceRepr + ValidAsZeroBits>(
         self: &Arc<Self>,
