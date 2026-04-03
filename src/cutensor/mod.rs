@@ -35,3 +35,7 @@
 pub mod result;
 #[allow(warnings)]
 pub mod sys;
+
+pub mod safe;
+
+pub use safe::*;
