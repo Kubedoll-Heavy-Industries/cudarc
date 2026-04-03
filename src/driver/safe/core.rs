@@ -166,11 +166,13 @@ impl CudaContext {
             cu_device,
             cu_ctx,
             ordinal,
-            has_async_alloc,
+            has_async_alloc: AtomicBool::new(has_async_alloc),
             is_primary: false,
             num_streams: AtomicUsize::new(0),
             event_tracking: AtomicBool::new(true),
             error_state: AtomicU32::new(0),
+            capture_retain: AtomicBool::new(false),
+            retained_ptrs: std::sync::Mutex::new(Vec::new()),
         });
         ctx.bind_to_thread()?;
         Ok(ctx)
@@ -217,11 +219,13 @@ impl CudaContext {
             cu_device,
             cu_ctx,
             ordinal,
-            has_async_alloc,
+            has_async_alloc: AtomicBool::new(has_async_alloc),
             is_primary: false,
             num_streams: AtomicUsize::new(0),
             event_tracking: AtomicBool::new(true),
             error_state: AtomicU32::new(0),
+            capture_retain: AtomicBool::new(false),
+            retained_ptrs: std::sync::Mutex::new(Vec::new()),
         });
         ctx.bind_to_thread()?;
         Ok(ctx)
@@ -254,11 +258,13 @@ impl CudaContext {
             cu_device,
             cu_ctx,
             ordinal,
-            has_async_alloc,
+            has_async_alloc: AtomicBool::new(has_async_alloc),
             is_primary: false,
             num_streams: AtomicUsize::new(0),
             event_tracking: AtomicBool::new(true),
             error_state: AtomicU32::new(0),
+            capture_retain: AtomicBool::new(false),
+            retained_ptrs: std::sync::Mutex::new(Vec::new()),
         });
         ctx.bind_to_thread()?;
         Ok(ctx)
@@ -280,7 +286,7 @@ impl CudaContext {
     /// Memory allocations performed through the default [CudaStream] will use `cuMemAllocAsync`
     /// over `cuMemAlloc` if this method returns `true`.
     pub fn has_async_alloc(&self) -> bool {
-        self.has_async_alloc
+        self.has_async_alloc.load(Ordering::Relaxed)
     }
 
     /// The number of devices available.

@@ -615,7 +615,7 @@ impl<T> MatmulOperation<'_, T> {
         bias: Option<&I>,
         act: Option<&Activation>,
     ) -> Result<(), CublasError> {
-        let stream = &self.blas.stream;
+        let stream = self.blas.stream();
         let (bias_ptr, _record_bias) = bias.map(|b| b.device_ptr(stream)).unzip();
         self.matmul_desc
             .set_epilogue(act, bias_ptr.as_ref(), self.stride_bias)?;

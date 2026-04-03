@@ -165,12 +165,6 @@ impl CudaGraph {
     /// While this function is marked as safe, actually using the
     /// returned object is unsafe.
     ///
-    /// **You must not destroy the graph**, as it is still
-    /// owned by the [CudaGraph].
-    pub fn cu_graph(&self) -> sys::CUgraph {
-        self.cu_graph
-    }
-
     /// Launches the graph on a specific stream.
     ///
     /// The stream must belong to the same context as the graph.
