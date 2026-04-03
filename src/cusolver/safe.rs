@@ -6,11 +6,6 @@ use super::{result, sys};
 
 pub use super::result::CusolverError;
 
-/// Handle for Dense LAPACK functions
-///
-/// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverdn-dense-lapack-function-reference)
-///
-/// This is [thread safe](https://docs.nvidia.com/cuda/cusolver/index.html#thread-safety)
 #[derive(Debug)]
 pub struct DnHandle {
     handle: sys::cusolverDnHandle_t,
@@ -77,9 +72,6 @@ impl DnHandle {
         feature = "cuda-13000",
     ))]
     pub fn get_deterministic_mode(&self) -> sys::cusolverDeterministicMode_t {
-        // NOTE: the possible errors here are `CUSOLVER_STATUS_NOT_INITIALIZED`, which is not possible
-        // since we have `&self`, and `CUSOLVER_STATUS_INVALID_VALUE` when mode is a null pointer, which
-        // is handled via result level. So we can safely unwrap
         unsafe { result::dn_get_deterministic_mode(self.handle) }.unwrap()
     }
 }
@@ -113,11 +105,6 @@ impl DnParams {
     }
 }
 
-/// Handle for Sparse LAPACK functions
-///
-/// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolversp-sparse-lapack-function-reference)
-///
-/// This is [thread safe](https://docs.nvidia.com/cuda/cusolver/index.html#thread-safety)
 #[derive(Debug)]
 pub struct SpHandle {
     handle: sys::cusolverSpHandle_t,
@@ -157,11 +144,6 @@ impl SpHandle {
     }
 }
 
-/// Handle for refactorization functions
-///
-/// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverrf-refactorization-reference)
-///
-/// This is [thread safe](https://docs.nvidia.com/cuda/cusolver/index.html#thread-safety)
 #[derive(Debug)]
 pub struct RfHandle {
     handle: sys::cusolverRfHandle_t,
@@ -189,7 +171,6 @@ impl RfHandle {
         self.handle
     }
 
-    /// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverrfsetmatrixformat)
     pub fn set_matrix_format(
         &self,
         format: sys::cusolverRfMatrixFormat_t,
@@ -198,22 +179,51 @@ impl RfHandle {
         unsafe { result::rf_set_matrix_format(self.handle, format, diag) }.unwrap()
     }
 
-    /// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverrfsetnumericproperties)
     pub fn set_numeric_properties(&self, zero: f64, boost: f64) {
         unsafe { result::rf_set_numeric_properties(self.handle, zero, boost) }.unwrap()
     }
 
-    /// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverrfsetresetvaluesfastmode)
     pub fn set_reset_values_fast_mode(&self, fast_mode: sys::cusolverRfResetValuesFastMode_t) {
         unsafe { result::rf_set_reset_values_fast_mode(self.handle, fast_mode) }.unwrap()
     }
 
-    /// See [cuda docs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverrfsetalgs)
     pub fn set_algs(
         &self,
         fact_alg: sys::cusolverRfFactorization_t,
         alg: sys::cusolverRfTriangularSolve_t,
     ) {
         unsafe { result::rf_set_algs(self.handle, fact_alg, alg) }.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::driver::CudaContext;
+
+    #[test]
+    fn test_dn_handle_creation() {
+        let ctx = CudaContext::new(0).unwrap();
+        let stream = ctx.default_stream();
+
+        let handle = DnHandle::new(stream).unwrap();
+        assert!(!handle.cu().is_null());
+        let _stream = handle.stream();
+    }
+
+    #[test]
+    fn test_sp_handle_creation() {
+        let ctx = CudaContext::new(0).unwrap();
+        let stream = ctx.default_stream();
+
+        let handle = SpHandle::new(stream).unwrap();
+        assert!(!handle.cu().is_null());
+        let _stream = handle.stream();
+    }
+
+    #[test]
+    fn test_rf_handle_creation() {
+        let handle = RfHandle::new().unwrap();
+        assert!(!handle.cu().is_null());
     }
 }
